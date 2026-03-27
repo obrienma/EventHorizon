@@ -132,8 +132,8 @@ src/
 ### ✅ Phase 1 — Foundation (current)
 - [x] Project scaffold, tsconfig, docker-compose
 - [x] Documentation + AI context files (CLAUDE.md, copilot-instructions.md)
-- [ ] `src/config.ts` — env validation via Zod
-- [ ] `src/ingestion/event.schema.ts` — discriminated union types
+- [x] `src/config.ts` — env validation via Zod
+- [x] `src/ingestion/event.schema.ts` — discriminated union types
 
 ### 🗄️ Phase 2 — Storage + Queue
 - [ ] `src/storage/db.ts` + `event.repository.ts` — MongoDB client, idempotent inserts

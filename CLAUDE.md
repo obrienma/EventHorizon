@@ -130,21 +130,19 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 
 ## Current Build Status
 
-**Completed:** project scaffold, tsconfig, docker-compose, .env, vitest config, README, all docs, copilot-instructions.md, CLAUDE.md.
+**Completed:** project scaffold, tsconfig, docker-compose, .env, vitest config, README, all docs, copilot-instructions.md, CLAUDE.md, `src/config.ts`, `src/ingestion/event.schema.ts`, `src/global.d.ts` (ambient Node type reference).
 
 **Not yet implemented** (in order):
-1. `src/config.ts`
-2. `src/ingestion/event.schema.ts`
-3. `src/storage/db.ts` + `src/storage/event.repository.ts`
-4. `src/processing/queue.ts`
-5. `src/ingestion/event.routes.ts`
-6. `src/processing/worker.ts` + `processors/enrich.ts` + `processors/classify.ts`
-7. `src/observation/changeStream.ts` + `src/observation/wsServer.ts`
-8. `src/dashboard/index.html`
-9. `src/seed/producer.ts`
-10. `src/observation/metrics.ts`
-11. Tests (colocated per layer)
-12. `src/server.ts` graceful shutdown
+1. `src/storage/db.ts` + `src/storage/event.repository.ts`
+2. `src/processing/queue.ts`
+3. `src/ingestion/event.routes.ts`
+4. `src/processing/worker.ts` + `processors/enrich.ts` + `processors/classify.ts`
+5. `src/observation/changeStream.ts` + `src/observation/wsServer.ts`
+6. `src/dashboard/index.html`
+7. `src/seed/producer.ts`
+8. `src/observation/metrics.ts`
+9. Tests (colocated per layer)
+10. `src/server.ts` graceful shutdown
 
 ---
 
@@ -153,7 +151,25 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 - **Work one step at a time** and pause for confirmation before moving to the next build step.
 - **Commit after each logical step** — the user commits manually; don't push.
 - **Don't add features beyond what's asked.** No extra error handling, no extra abstractions, no unrequested refactors.
-- **No doc files** unless explicitly requested. Update `CLAUDE.md` and `copilot-instructions.md` Build Status section after each completed step.
+- **No doc files** unless explicitly requested. Update `CLAUDE.md` Build Status section after each completed step.
+- **Maintain `LEARNING_LOG.md`**: After each phase, append new entries for every pattern used, anti-pattern avoided, challenge encountered, or design decision made. Use the established entry format (Pattern / Anti-Pattern / Challenge / Decision sections with **Q:**/**A:** flashcard blocks).
 - TypeScript strict mode means all nullable paths must be handled — don't use `!` non-null assertions unless provably safe.
 - ESM (`"type": "module"`) — all imports need explicit `.js` extensions when importing local files (TypeScript resolves `.ts` → `.js` at runtime with NodeNext).
 - Update the Build Status section in this file after each completed step.
+
+## Learning & Mentorship Protocol
+This project is a learning vehicle for Reactive Data Planes and Distributed Systems.
+Follow these rules for every interaction:
+
+1. **Context First:** Before providing code, explain the specific Distributed Systems pattern being used (e.g., Competing Consumers, Idempotent Receiver, or Circuit Breaker).
+2. **The "Why" over "How":** For every major implementation (RabbitMQ configuration, MongoDB Change Streams), include a "Design Decision" comment block explaining why this choice is superior to alternatives.
+3. **Intentional Friction:** Do not solve 100% of the problem at once. Provide the core architecture and logic, but leave "TODO" blocks for edge-case error handling or specific Zod refinements for me to implement manually.
+4. **Code Reviews:** If I provide code, critique it like a Senior Architect. Focus on:
+    - Type safety (Zod/TS)
+    - Resource leaks (unclosed sockets/channels)
+    - Scalability (bottlenecks in the pipeline)
+5. **No Hallucinations:** If a library (like `amqplib`) has a specific quirk with ESM or Top-Level Await, point it out explicitly.
+6. **Failure Mode First:** Before implementing any component, describe how it fails. What happens when RabbitMQ is unreachable at startup? When MongoDB drops mid-insert? Design for the unhappy path before writing the happy path.
+7. **Vocabulary Enforcement:** Use correct Distributed Systems terminology consistently — *at-least-once delivery*, *competing consumers*, *head-of-line blocking*, *idempotent receiver*. Name the concept formally before using casual language.
+8. **Checkpoint Questions:** After each completed phase, ask me to explain back what was built and *why* — e.g. "Why does the worker ack after writing to Mongo, not before?" Forces active recall over passive reading.
+9. **Name the Anti-Pattern Avoided:** When a design decision sidesteps a trap (append-only vs. update-in-place, prefetch vs. unbounded consumption), explicitly name the anti-pattern being avoided and the failure mode it prevents.

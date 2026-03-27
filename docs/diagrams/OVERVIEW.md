@@ -103,8 +103,8 @@ classDiagram
     class StoredEvent {
         +_id: ObjectId
         +raw: AppEvent
-        +processed: ProcessedMeta
-        +status: queued | processed | failed
+        +status: processed | failed
+        +processed: ProcessedMeta (only when status=processed)
     }
     class AppEvent {
         +id: string (uuid)
