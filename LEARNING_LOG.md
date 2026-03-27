@@ -153,9 +153,9 @@ This is the **Leaky Abstraction** anti-pattern: you're importing the browser's t
 
 ---
 
-## Phase 2 — Server skeleton (2026-03-26)
+## Phase 2 — Server skeleton + Ingestion route (2026-03-26)
 
-Files built: `src/server.ts`
+Files built: `src/server.ts`, `src/ingestion/event.routes.ts`, `src/processing/queue.ts` (stub), `src/ingestion/event.routes.test.ts`
 
 ---
 
@@ -191,5 +191,68 @@ The mock boundary moves down as you implement each layer. At the bottom, `mongod
 
 **Q:** What is the difference between London-school and Detroit-school TDD?
 **A:** London-school (mockist) isolates each unit with mocks for its collaborators. Detroit-school (classicist) uses real implementations wherever possible, only mocking true external systems. London-school suits top-down builds; Detroit-school suits bottom-up.
+
+---
+
+### Pattern: Validation Boundary
+
+**Where it appears:** `src/ingestion/event.routes.ts`
+
+**What it is:**
+A single point in the system where all external input is validated before it can travel further. Downstream code never needs to re-validate — it trusts that anything past this boundary is well-typed.
+
+**Why it matters here:**
+The POST /events route is the only entry point for event data. Once `EventSchema.safeParse()` succeeds, the resulting `AppEvent` is a fully-typed, trusted value. RabbitMQ, the worker, MongoDB — none of them need to re-check the shape.
+
+**Anti-pattern avoided: Defensive Validation Spread**
+Validating the same data at multiple layers (route → worker → storage) is redundant and inconsistent — each layer may check different fields, creating subtle divergence. One boundary, one source of truth.
+
+**Q:** Why does the ingestion route return `202 Accepted` instead of `200 OK`?
+**A:** 202 means "received and handed off for async processing." 200 implies the work is complete. The event has only been queued — it hasn't been processed or stored yet.
+
+**Q:** Where is the validation boundary in EventHorizon, and what does it guarantee?
+**A:** `event.routes.ts` — the POST /events handler. It guarantees that any `AppEvent` value flowing into RabbitMQ or beyond has passed Zod schema validation. No downstream code needs to re-validate.
+
+---
+
+### Challenge: Zod 4 Strict UUID Validation
+
+**Phase:** Phase 2 — writing test fixtures
+
+**Symptom:**
+```
+expected 202 to be 422
+```
+Test was sending `"id": "00000000-0000-0000-0000-000000000001"` — a fake sequential UUID common in test fixtures.
+
+**Root cause:**
+Zod 4 enforces RFC 4122 strictly. The UUID version nibble (4th group, first character) must be `1–8`. The nil UUID (`000...000`) and max UUID (`fff...fff`) are the only exceptions. Version `0` is invalid.
+
+Zod 3 was more permissive — this is a breaking change between versions.
+
+**Fix:** Use a real RFC 4122 v4 UUID in fixtures: `"123e4567-e89b-42d3-a456-426614174000"`
+
+**Q:** Why did `"00000000-0000-0000-0000-000000000001"` fail Zod 4's UUID validator but would have passed Zod 3?
+**A:** Zod 4 enforces RFC 4122 — the version nibble must be `1–8`. This UUID has version `0`, which is invalid. Zod 3 only checked the format (8-4-4-4-12 hex), not the version nibble. Always use a real v4 UUID in test fixtures.
+
+---
+
+### Challenge: NVM Default Node Version Not Active in Shell
+
+**Phase:** Phase 2 — running tests for the first time
+
+**Symptom:**
+```
+SyntaxError: Unexpected token '.'
+```
+Optional chaining (`?.`) not recognised — Node 12 was active despite NVM default being Node 24.
+
+**Root cause:**
+The NVM default is set in `~/.nvm/nvm.sh` and applied by `.bash_profile`. A shell that didn't source `.bash_profile` (e.g. a subprocess or non-login shell) falls back to the system Node, which on this WSL2 machine is v12.
+
+**Fix:** `source ~/.nvm/nvm.sh && nvm use 24` — or ensure the terminal is a login shell that sources `.bash_profile`.
+
+**Q:** Why might `node --version` return v12 even though NVM default is set to v24?
+**A:** NVM's default is applied by sourcing `~/.nvm/nvm.sh` via `.bash_profile`. Non-login shells (subprocesses, some terminal emulators) don't source `.bash_profile`, so the system Node takes precedence.
 
 ---

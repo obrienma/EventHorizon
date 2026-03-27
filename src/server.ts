@@ -1,10 +1,11 @@
 import Fastify from "fastify";
 import { config } from "./config.js";
+import { eventRoutes } from "./ingestion/event.routes.js";
 
 export const app = Fastify({ logger: true });
 
 // ── Routes ────────────────────────────────────────────────────────────────────
-// TODO [step 2]: app.register(eventRoutes) — POST /events ingestion route
+void app.register(eventRoutes);
 
 // ── Startup ───────────────────────────────────────────────────────────────────
 // TODO [step 3]: connectRabbitMQ() — establish AMQP connection + declare topology
