@@ -152,3 +152,44 @@ This is the **Leaky Abstraction** anti-pattern: you're importing the browser's t
 **A:** Adding `dom` imports the browser's type universe — `window`, `document`, `localStorage` etc. all typecheck silently. This is the Leaky Abstraction anti-pattern: the compiler can no longer catch accidental browser API usage in server code.
 
 ---
+
+## Phase 2 — Server skeleton (2026-03-26)
+
+Files built: `src/server.ts`
+
+---
+
+### Decision: Top-Down Build Order
+
+**What it is:**
+Build starting from the entry point (`server.ts`) and add each collaborator only when the layer above calls it. The opposite is bottom-up (build storage first, then queue, then routes).
+
+**Why top-down here:**
+- You always have a running program — `npm run dev` works from step 1
+- Each new file has an immediate, visible reason to exist
+- Failure modes surface at the boundary you just added, not somewhere deep in the stack
+
+**Tradeoff:**
+Early layers need mocks for the layers below them. Bottom-up gives real implementations all the way down but nothing runs end-to-end until the very last file.
+
+---
+
+### Pattern: London-School TDD (Mockist)
+
+**What it is:**
+Test each unit in isolation by replacing its collaborators with mocks/stubs. Contrast with Detroit-school (classicist) TDD which uses real implementations wherever possible.
+
+**How it applies here:**
+
+| Layer | Real | Mocked |
+|---|---|---|
+| `event.routes.ts` test | Fastify `inject()` | `publishEvent` via `vi.mock()` |
+| `worker.ts` test | processor logic | `repository.insertOne` |
+| `event.repository.ts` test | everything | nothing (mongodb-memory-server) |
+
+The mock boundary moves down as you implement each layer. At the bottom, `mongodb-memory-server` gives you a real implementation with no live infra needed.
+
+**Q:** What is the difference between London-school and Detroit-school TDD?
+**A:** London-school (mockist) isolates each unit with mocks for its collaborators. Detroit-school (classicist) uses real implementations wherever possible, only mocking true external systems. London-school suits top-down builds; Detroit-school suits bottom-up.
+
+---
