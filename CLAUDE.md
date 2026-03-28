@@ -157,6 +157,9 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 - ESM (`"type": "module"`) — all imports need explicit `.js` extensions when importing local files (TypeScript resolves `.ts` → `.js` at runtime with NodeNext).
 - Update the Build Status section in this file after each completed step.
 
+## ADR files
+Create decision logs according to https://martinfowler.com/bliki/ArchitectureDecisionRecord.html
+
 ## Learning & Mentorship Protocol
 This project is a learning vehicle for Reactive Data Planes and Distributed Systems.
 Follow these rules for every interaction:
