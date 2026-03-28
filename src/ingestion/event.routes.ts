@@ -13,7 +13,7 @@ export async function eventRoutes(app: FastifyInstance): Promise<void> {
     // TODO: publishEvent can throw if RabbitMQ is unavailable — what HTTP status
     // is appropriate here? Should the ingestion plane return 503, or let the
     // exception bubble up to Fastify's default 500 handler?
-    await publishEvent(result.data);
+    publishEvent(result.data);
 
     return reply.status(202).send({ id: result.data.id });
   });

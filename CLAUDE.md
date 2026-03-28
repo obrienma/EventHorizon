@@ -172,7 +172,7 @@ Follow these rules for every interaction:
     - Resource leaks (unclosed sockets/channels)
     - Scalability (bottlenecks in the pipeline)
 5. **No Hallucinations:** If a library (like `amqplib`) has a specific quirk with ESM or Top-Level Await, point it out explicitly.
-6. **Failure Mode First:** Before implementing any component, describe how it fails. What happens when RabbitMQ is unreachable at startup? When MongoDB drops mid-insert? Design for the unhappy path before writing the happy path.
+6. **Failure Mode First:** Before implementing any component, describe how it fails. What happens when RabbitMQ is unreachable at startup? When MongoDB drops mid-insert? Design for the unhappy path before writing the happy path. Write this to LEARNING_LOG.md.
 7. **Vocabulary Enforcement:** Use correct Distributed Systems terminology consistently — *at-least-once delivery*, *competing consumers*, *head-of-line blocking*, *idempotent receiver*. Name the concept formally before using casual language.
 8. **Checkpoint Questions:** After each completed phase, ask me to explain back what was built and *why* — e.g. "Why does the worker ack after writing to Mongo, not before?" Forces active recall over passive reading.
 9. **Name the Anti-Pattern Avoided:** When a design decision sidesteps a trap (append-only vs. update-in-place, prefetch vs. unbounded consumption), explicitly name the anti-pattern being avoided and the failure mode it prevents.

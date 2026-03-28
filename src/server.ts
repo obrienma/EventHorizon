@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { config } from "./config.js";
 import { eventRoutes } from "./ingestion/event.routes.js";
+import { connectQueue, closeQueue } from "./processing/queue.js";
 
 export const app = Fastify({ logger: true });
 
@@ -8,9 +9,10 @@ export const app = Fastify({ logger: true });
 void app.register(eventRoutes);
 
 // ── Startup ───────────────────────────────────────────────────────────────────
-// TODO [step 3]: connectRabbitMQ() — establish AMQP connection + declare topology
 // TODO [step 5]: connectMongo()    — establish MongoDB client connection
 // TODO [step 6]: startChangeStream() + startWsServer() — observation plane
+
+await connectQueue();
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 // Order matters — see CLAUDE.md. Fastify drains in-flight requests first.
@@ -26,7 +28,7 @@ async function shutdown(signal: string): Promise<void> {
 
   try {
     await app.close();               // step 1: drain in-flight HTTP requests
-    // TODO [step 3]: cancelConsumer() then closeAmqpChannel() + closeAmqpConnection()
+    await closeQueue();              // step 2: close AMQP channel + connection
     // TODO [step 6]: closeChangeStream()
     // TODO [step 5]: closeMongoClient()
     app.log.info("shutdown complete");

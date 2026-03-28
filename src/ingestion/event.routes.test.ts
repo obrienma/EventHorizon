@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { app } from "../server.js";
 
 vi.mock("../processing/queue.js", () => ({
-  publishEvent: vi.fn().mockResolvedValue(undefined),
+  connectQueue: vi.fn().mockResolvedValue(undefined),
+  closeQueue: vi.fn().mockResolvedValue(undefined),
+  publishEvent: vi.fn(),
 }));
 
 const validEvent = {

@@ -1,3 +1,4 @@
+
 # EventHorizon — Learning Log
 
 > Personal study notes generated during the build. Not for public consumption.
@@ -254,5 +255,84 @@ The NVM default is set in `~/.nvm/nvm.sh` and applied by `.bash_profile`. A shel
 
 **Q:** Why might `node --version` return v12 even though NVM default is set to v24?
 **A:** NVM's default is applied by sourcing `~/.nvm/nvm.sh` via `.bash_profile`. Non-login shells (subprocesses, some terminal emulators) don't source `.bash_profile`, so the system Node takes precedence.
+
+---
+
+## Phase 3 — Processing Plane: RabbitMQ topology + publishEvent (2026-03-27)
+
+Files built: `src/processing/queue.ts`
+
+---
+
+### Pattern: Publisher-Subscriber with Durable Topic Exchange
+
+**What it is:**
+The ingestion plane (publisher) sends events to a named exchange without knowing which queues or consumers exist. The processing plane (subscriber) binds a queue to that exchange and receives only the messages matching its binding key. Publisher and subscriber are fully decoupled — neither holds a reference to the other.
+
+**Why it matters here:**
+`publishEvent()` in `queue.ts` is the publisher. It sends to the `events` exchange with routing key `events.<type>`. The work queue consumer is the subscriber. They share nothing except the exchange name and routing key convention.
+
+**Durability guarantee:**
+For messages to survive a broker restart, three things must all be true simultaneously:
+1. The exchange is declared `durable: true`
+2. The queue is declared `durable: true`
+3. Each message is published with `persistent: true` (`deliveryMode: 2` on the wire)
+
+If any one of these is false, messages are lost on restart. This is a common misconfiguration.
+
+**Q:** What three things must be true for a RabbitMQ message to survive a broker restart?
+**A:** The exchange must be `durable: true`, the queue must be `durable: true`, and each message must be published with `persistent: true`. All three are required — any one missing means messages are lost on restart.
+
+---
+
+### Pattern: Idempotent Topology Declaration
+
+**What it is:**
+Declare exchanges and queues on every startup using `assertExchange()` / `assertQueue()`. If they already exist with the same arguments, the calls are no-ops. If arguments differ, RabbitMQ throws a `406 PRECONDITION_FAILED` error, which is intentional — it prevents silent misconfiguration.
+
+**Why it matters here:**
+`connectQueue()` is called on every server start. There is no "create only if not exists" flag — `assert*` is always safe to call. The only danger is changing a queue's arguments (e.g., adding a DLX to an existing queue without deleting it first) — RabbitMQ will reject the assertion.
+
+**Q:** What does `channel.assertQueue()` do if the queue already exists?
+**A:** It's a no-op if the arguments match exactly. If the arguments differ (e.g. the queue was declared without a DLX, now you're asserting one with a DLX), RabbitMQ throws `406 PRECONDITION_FAILED`. Safe to call on every startup; dangerous to change arguments on a live queue.
+
+---
+
+### Failure Mode First: `src/processing/queue.ts`
+
+Written before implementation — designing for the unhappy path.
+
+| Failure | When | Behaviour |
+|---|---|---|
+| RabbitMQ unreachable at startup | `amqp.connect()` rejects | Error propagates; `server.ts` catches it; `process.exit(1)` |
+| Connection drops mid-run | `amqplib` emits `'error'` on connection/channel | Must register error listeners; unhandled `'error'` event = Node.js crash |
+| `publishEvent()` called before `connectQueue()` | Channel is `null` | Throws `Error("Queue not initialised")` — fail loudly, don't silently drop |
+| `channel.publish()` returns `false` | RabbitMQ write buffer full (backpressure) | Log warning; respect backpressure; do not retry synchronously |
+| Message serialisation fails | `JSON.stringify` throws (circular refs etc.) | Let it throw — this is a programming error, not a runtime condition |
+
+**Q:** What happens in Node.js if an `'error'` event is emitted on an EventEmitter and no listener is registered?
+**A:** Node.js throws the error as an uncaught exception, crashing the process. All `amqplib` Connection and Channel objects are EventEmitters — you must register `.on('error', handler)` on both, or a broker-side disconnect will crash the server.
+
+---
+
+### Anti-Pattern Avoided: Module-Level Side Effects in Connection Setup
+
+**The tempting wrong approach:**
+```ts
+// ❌ BAD — top-level await, connection happens on import
+const connection = await amqp.connect(config.RABBITMQ_URL);
+export const channel = await connection.createChannel();
+```
+
+**Why it's wrong:**
+- Importing this module causes a network connection attempt, even in tests
+- `vi.mock()` does not prevent top-level `await` from executing before the mock is installed
+- Any test that imports from this file will try to connect to RabbitMQ
+
+**The correct approach:**
+Export a `connectQueue()` function. The module is side-effect-free on import. The caller (server startup) decides when to connect.
+
+**Q:** Why is a module-level `await amqp.connect(...)` at the top of `queue.ts` an anti-pattern?
+**A:** Top-level await runs on import, before mocks can be installed and regardless of test context. Any file that imports `queue.ts` will attempt a real network connection. The fix is to export a `connectQueue()` function — the module is inert on import, the caller controls when the connection is established.
 
 ---
