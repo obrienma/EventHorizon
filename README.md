@@ -129,29 +129,30 @@ src/
 
 ## 🗺️ Roadmap
 
-### ✅ Phase 1 — Foundation (current)
+### ✅ Phase 1 — Foundation
 - [x] Project scaffold, tsconfig, docker-compose
 - [x] Documentation + AI context files (CLAUDE.md, copilot-instructions.md)
 - [x] `src/config.ts` — env validation via Zod
 - [x] `src/ingestion/event.schema.ts` — discriminated union types
 
-### 🗄️ Phase 2 — Storage + Queue
-- [ ] `src/storage/db.ts` + `event.repository.ts` — MongoDB client, idempotent inserts
-- [ ] `src/processing/queue.ts` — RabbitMQ topology declaration
+### ✅ Phase 2 — Entry Point + Ingestion (current)
+- [x] `src/server.ts` — Fastify app, signal handling, graceful shutdown skeleton
+- [x] `src/ingestion/event.routes.ts` — POST /events, Zod validation, 202 Accepted
+- [x] `src/processing/queue.ts` (stub) — `publishEvent` placeholder
 
-### ⚙️ Phase 3 — Ingestion + Processing
-- [ ] `src/ingestion/event.routes.ts` — POST/GET `/events`
-- [ ] `src/processing/worker.ts` + `processors/` — enrich, classify, ack/nack/retry
+### ⚙️ Phase 3 — Message Broker
+- [ ] `src/processing/queue.ts` — RabbitMQ topology + real `publishEvent()`
+- [ ] `src/processing/worker.ts` + `processors/enrich.ts` + `processors/classify.ts`
 
-### 🔭 Phase 4 — Observation Plane
+### 🗄️ Phase 4 — Storage Plane
+- [ ] `src/storage/db.ts` — MongoDB client connection
+- [ ] `src/storage/event.repository.ts` — idempotent inserts, duplicate key handling
+
+### 🔭 Phase 5 — Observation Plane
 - [ ] `src/observation/changeStream.ts` — MongoDB change stream as `AsyncIterable`
 - [ ] `src/observation/wsServer.ts` — WebSocket connection manager + broadcast
 - [ ] `src/observation/metrics.ts` — rolling stats, lag, type distribution
 
-### 📊 Phase 5 — Dashboard + Seed
+### 📊 Phase 6 — Dashboard + Seed
 - [ ] `src/dashboard/index.html` — live feed, stats bar, event detail (vanilla JS)
 - [ ] `src/seed/producer.ts` — CLI fake event generator
-
-### 🛡️ Phase 6 — Resilience + Tests
-- [ ] `src/server.ts` graceful shutdown (drain sequence)
-- [ ] Vitest: schema, repository, route, processor tests

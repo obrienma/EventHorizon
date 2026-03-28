@@ -130,21 +130,19 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 
 ## Current Build Status
 
-**Completed:** project scaffold, tsconfig, docker-compose, .env, vitest config, README, all docs, copilot-instructions.md, CLAUDE.md, `src/config.ts`, `src/ingestion/event.schema.ts`, `src/global.d.ts` (ambient Node type reference).
+**Completed:** project scaffold, tsconfig, docker-compose, .env, vitest config, README, all docs, copilot-instructions.md, CLAUDE.md, `src/config.ts`, `src/ingestion/event.schema.ts`, `src/global.d.ts`, `src/server.ts`, `src/ingestion/event.routes.ts`, `src/processing/queue.ts` (stub + test).
 
 **Build order: top-down** (start at the entry point, add each layer as it's called)
 
 **Not yet implemented** (in order):
-1. `src/server.ts` — Fastify app, graceful shutdown skeleton
-2. `src/ingestion/event.routes.ts` — POST /events, Zod validation, publish stub
-3. `src/processing/queue.ts` — RabbitMQ topology + `publishEvent()`
-4. `src/processing/worker.ts` + `processors/enrich.ts` + `processors/classify.ts`
-5. `src/storage/db.ts` + `src/storage/event.repository.ts`
-6. `src/observation/changeStream.ts` + `src/observation/wsServer.ts`
-7. `src/observation/metrics.ts`
-8. `src/seed/producer.ts`
-9. `src/dashboard/index.html`
-10. Tests colocated per layer (Fastify inject + vi.mock → real mongodb-memory-server at bottom)
+1. `src/processing/queue.ts` — RabbitMQ topology + real `publishEvent()`
+2. `src/processing/worker.ts` + `processors/enrich.ts` + `processors/classify.ts`
+3. `src/storage/db.ts` + `src/storage/event.repository.ts`
+4. `src/observation/changeStream.ts` + `src/observation/wsServer.ts`
+5. `src/observation/metrics.ts`
+6. `src/seed/producer.ts`
+7. `src/dashboard/index.html`
+8. Tests colocated per layer (Fastify inject + vi.mock → real mongodb-memory-server at bottom)
 
 ---
 
