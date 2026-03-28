@@ -130,13 +130,13 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 
 ## Current Build Status
 
-**Completed:** project scaffold, tsconfig, docker-compose, .env, vitest config, README, all docs, copilot-instructions.md, CLAUDE.md, `src/config.ts`, `src/ingestion/event.schema.ts`, `src/global.d.ts`, `src/server.ts`, `src/ingestion/event.routes.ts`, `src/processing/queue.ts` (stub + test).
+**Completed:** project scaffold, tsconfig, docker-compose, .env, vitest config, README, all docs, copilot-instructions.md, CLAUDE.md, `src/config.ts`, `src/ingestion/event.schema.ts`, `src/global.d.ts`, `src/server.ts`, `src/ingestion/event.routes.ts`, `src/processing/queue.ts`, `src/processing/worker.ts`, `src/processors/enrich.ts`, `src/processors/classify.ts`.
 
 **Build order: top-down** (start at the entry point, add each layer as it's called)
 
 **Not yet implemented** (in order):
-1. `src/processing/queue.ts` — RabbitMQ topology + real `publishEvent()`
-2. `src/processing/worker.ts` + `processors/enrich.ts` + `processors/classify.ts`
+1. ~~`src/processing/queue.ts` — RabbitMQ topology + real `publishEvent()`~~ ✓
+2. ~~`src/processing/worker.ts` + `processors/enrich.ts` + `processors/classify.ts`~~ ✓
 3. `src/storage/db.ts` + `src/storage/event.repository.ts`
 4. `src/observation/changeStream.ts` + `src/observation/wsServer.ts`
 5. `src/observation/metrics.ts`

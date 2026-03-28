@@ -336,3 +336,104 @@ Export a `connectQueue()` function. The module is side-effect-free on import. Th
 **A:** Top-level await runs on import, before mocks can be installed and regardless of test context. Any file that imports `queue.ts` will attempt a real network connection. The fix is to export a `connectQueue()` function — the module is inert on import, the caller controls when the connection is established.
 
 ---
+
+## Phase 3 — Processing Plane: Worker + Processors (2026-03-27)
+
+Files built: `src/processing/worker.ts`, `src/processors/enrich.ts`, `src/processors/classify.ts`
+
+---
+
+### Pattern: Competing Consumers
+
+**Where it appears:** `src/processing/worker.ts` — `ch.consume(QUEUE_NAME, handler)`
+
+**What it is:**
+Multiple worker processes consume from the same durable queue simultaneously. The message broker (RabbitMQ) distributes messages across active consumers in round-robin fashion. No worker knows about the others — the broker is the coordinator.
+
+**Why it matters here:**
+To scale throughput, you start more worker processes. Each calls `amqp.connect()` + `ch.consume()` independently. The broker handles the load distribution. This is horizontal scaling without any shared state or coordination code.
+
+**Q:** How does RabbitMQ distribute messages across multiple consumers of the same queue?
+**A:** Round-robin: each new message is delivered to the next consumer in rotation. Combined with `prefetch`, this ensures no single consumer is overwhelmed — the broker only delivers up to `prefetch` unacknowledged messages per consumer.
+
+---
+
+### Anti-Pattern Avoided: Unbounded Consumption (a.k.a. "The Prefetch Problem")
+
+**Where it applies:** Any AMQP consumer.
+
+**The anti-pattern:**
+Without `channel.prefetch(N)`, the broker pushes ALL queued messages to the first consumer that connects. If the queue has 50,000 messages, all 50,000 are loaded into the consumer's memory simultaneously, causing:
+1. Memory pressure / OOM
+2. Head-of-line blocking: slow messages freeze all subsequent messages
+3. No load distribution: the second worker to connect gets nothing
+
+**The fix:**
+`await ch.prefetch(config.WORKER_PREFETCH)` (AMQP `basic.qos`) caps unacknowledged messages per consumer. New messages are only delivered after the worker acks existing ones.
+
+**Q:** What is AMQP `basic.qos` / `channel.prefetch()` and why is it non-negotiable for production consumers?
+**A:** It caps the number of unacknowledged messages the broker delivers to a single consumer. Without it, the broker floods one consumer with the entire queue. With it, messages are distributed proportionally to each consumer's ack rate — faster workers naturally receive more messages.
+
+---
+
+### Anti-Pattern Avoided: Head-of-Line Blocking via `requeue=true`
+
+**Where it applies:** Error handling in AMQP consumers.
+
+**The anti-pattern:**
+`ch.nack(msg, false, true)` (requeue=true) puts a failed message at the **front** of the queue. If the message is a poison pill (e.g., always fails), it blocks every message behind it indefinitely. All other consumers also see it first.
+
+**The fix:**
+On error: republish to the **back** of the queue with an incremented `x-retry-count` header, then ack the original. After `MAX_RETRIES`, `ch.nack(msg, false, false)` dead-letters it via the DLX. The message goes to `events.dead` without blocking anything.
+
+**Q:** Why is `nack(msg, false, true)` (requeue=true) dangerous for retry logic?
+**A:** It puts the failed message at the front of the queue (head-of-line blocking). A poison message that always fails will starve all other messages. The correct pattern is to ack the original and republish to the back of the queue with a retry counter in the headers.
+
+---
+
+### Pattern: At-Least-Once Delivery + Idempotent Receiver
+
+**Where it appears:** `worker.ts` (delivery guarantee) + `event.repository.ts` (upcoming, step 3)
+
+**What it is:**
+At-least-once delivery means a message is guaranteed to be delivered, but may be delivered more than once. The worker acks AFTER processing completes. If the worker crashes between "processing done" and "ack sent," the broker redelivers the message to another consumer.
+
+The receiver (MongoDB insert) must be **idempotent** — processing the same message twice must produce the same result as processing it once. The unique index on `{ "raw.id": 1 }` absorbs duplicate inserts silently (error code 11000).
+
+**Q:** Why does the worker ack AFTER writing to MongoDB, not before?
+**A:** Acking before the write is "at-most-once" delivery: if the process crashes after the ack but before the write, the message is permanently lost — the broker thinks it was handled. Acking after the write is "at-least-once": a crash before the ack causes redelivery, and the idempotent insert absorbs the duplicate.
+
+---
+
+### Decision: Worker Owns Its Own AMQP Connection
+
+**Context:** `queue.ts` already holds a connection for publishing. Could the worker reuse it?
+
+**Decision:** No — `worker.ts` calls `amqp.connect()` independently.
+
+**Why:**
+1. **Separate lifecycles:** The server (publisher) and the worker are different OS processes. They can't share in-memory objects.
+2. **Isolation:** A channel error in the publisher doesn't crash the consumer's channel, and vice versa.
+3. **Shutdown independence:** Graceful shutdown sequences differ between publisher and consumer.
+
+**Q:** Can a publisher and consumer share an AMQP connection?
+**A:** Technically yes (AMQP multiplexes channels over one connection), but in practice they shouldn't when they're separate OS processes — they can't share in-memory objects. Even in the same process, separating connections isolates error domains: a publisher channel error won't affect in-flight consumer acks.
+
+---
+
+### Pattern: Pure Function Processors
+
+**Where it appears:** `src/processors/enrich.ts`, `src/processors/classify.ts`
+
+**What it is:**
+`enrich()` and `classify()` are pure functions: same input always produces same output, no I/O, no side effects.
+
+**Why it matters:**
+1. **Testability:** No mocks, no stubs, no fake timers. Just call the function and assert.
+2. **Composability:** Processors can be chained, reordered, or replaced without changing the worker's control flow.
+3. **Debuggability:** If a classification is wrong, reproduce it with a single function call — no queue, no MongoDB, no network.
+
+**Q:** What does it mean for a function to be "pure" and why does it matter for a data pipeline?
+**A:** A pure function has no side effects and returns the same output for the same input. In a pipeline, pure processors are trivially unit-testable (no mocks), composable (can be chained freely), and debuggable (reproduce any bug with a single function call and a fixture event).
+
+---
