@@ -153,6 +153,6 @@ src/
 - [x] `src/observation/wsServer.ts` — WebSocket connection manager + broadcast
 - [x] `src/observation/metrics.ts` — rolling stats, lag, type distribution
 
-### 🚧 Phase 6 — Dashboard + Seed (not yet built)
+### 🚧 Phase 6 — Dashboard + Seed
+- [x] `src/seed/producer.ts` — CLI fake event generator
 - [ ] `src/dashboard/index.html` — live feed, stats bar, event detail (vanilla JS)
-- [ ] `src/seed/producer.ts` — CLI fake event generator

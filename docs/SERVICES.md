@@ -185,8 +185,6 @@ Single HTML file, inline JS, no build step. Connects to `ws://localhost:3000/liv
 
 ## `src/seed/producer.ts`
 
-> **Not yet implemented.**
-
 CLI script. Generates random events and POSTs them to `POST /events`.
 
 ```
