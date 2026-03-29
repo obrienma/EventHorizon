@@ -651,3 +651,31 @@ Using hand-crafted IDs like `00000000-0000-0000-0000-000000000001` is convenient
 **A:** Check what happens *before* `saveEvent` is reached — specifically, whether the input passes schema validation. If Zod throws, the worker short-circuits and `saveEvent` is never invoked. The assertion failure ("called 0 times") looks like a mock problem but is actually an upstream parse failure. Always read the stderr output alongside the assertion failures.
 
 ---
+
+## Phase 7 — Concepts: Node.js Event Loop Handle Ref-Counting (2026-03-29)
+
+---
+
+### Pattern: `timer.unref()` for background maintenance timers
+
+**Where it appears:** `src/observation/metrics.ts` (`startMetrics` interval), `src/observation/wsServer.ts` (heartbeat interval)
+
+**What it is:**
+Node.js keeps the process alive as long as there are **ref'd handles** — open sockets, pending I/O, active timers. `setInterval` creates a ref'd handle by default. `.unref()` marks a handle as *background*: it still fires on schedule while other handles are active, but it will not prevent the process from exiting naturally when everything else has closed.
+
+**Why it matters here:**
+Both the stats broadcast interval and the WebSocket heartbeat are maintenance timers — they serve the system while it's running but should not *own* the process lifecycle. Without `.unref()`, after shutdown closes Fastify, the change stream, MongoDB, and AMQP, these timers would remain as live handles keeping the event loop spinning indefinitely.
+
+**The nuance:**
+In the current shutdown sequence, `stopMetrics()` calls `clearInterval` explicitly and `process.exit(0)` is called unconditionally — so the process exits regardless. `.unref()` is defensive hygiene: if either of those were removed or the code restructured, the timer wouldn't silently become a zombie that blocks natural exit.
+
+**Anti-Pattern Avoided: Timers that own the process lifecycle**
+A timer that *should* be background but isn't `.unref()`'d keeps the event loop alive even after all meaningful work is done. The process appears hung — no activity, no exit. This is especially subtle in test environments where the process not exiting causes test runners to timeout.
+
+**Q:** What does `timer.unref()` do in Node.js?
+**A:** It marks the timer as a background handle. It fires normally while other ref'd handles (sockets, I/O, other timers) are active, but it won't prevent the process from exiting when everything else has closed. The opposite, `timer.ref()`, re-registers it as a handle that keeps the event loop alive.
+
+**Q:** Why do the metrics interval and WebSocket heartbeat both call `.unref()`?
+**A:** Both are maintenance timers — they serve the system while it's running but shouldn't own the process lifecycle. Without `.unref()`, they'd keep the event loop alive after all real work (HTTP, MongoDB, AMQP) has been shut down, preventing natural process exit. They're background workers, not owners.
+
+---

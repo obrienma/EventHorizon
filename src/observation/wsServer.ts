@@ -25,7 +25,7 @@ const clients = new Map<WebSocket, boolean>(); // socket → isAlive
 const PING_INTERVAL_MS = 30_000;
 
 // ── broadcast ─────────────────────────────────────────────────────────────────
-// Exported so the change stream (and later, metrics) can push to all clients.
+// Exported so the change stream and metrics can push to all clients.
 // Safe to call with zero connected clients — iterates an empty Map.
 
 export function broadcast(message: WsMessage): void {

@@ -66,24 +66,26 @@ The worker connects to RabbitMQ and begins consuming from `events.work`. You can
 
 ## 6. Generate Fake Events
 
-```bash
-# 2 events/second, all types, run indefinitely
-npm run seed -- --rate=2 --type=all
-
-# Pipeline events only, for 60 seconds
-npm run seed -- --rate=5 --type=pipeline --duration=60
-
-# Preview event shapes without sending
-npm run seed -- --dry-run
-```
+> **`src/seed/producer.ts` is not yet implemented.** Once built, usage will be:
+> ```bash
+> npm run seed -- --rate=2 --type=all
+> ```
+> In the meantime, send events manually with curl:
+> ```bash
+> curl -s -X POST http://localhost:3000/events \
+>   -H "Content-Type: application/json" \
+>   -d '{"id":"550e8400-e29b-41d4-a716-446655440000","timestamp":"2026-01-01T00:00:00.000Z","source":"curl","type":"app","payload":{"action":"login"}}'
+> ```
 
 ## 7. Open the Dashboard
 
-```
-http://localhost:3000/dashboard
-```
-
-You should see events flowing in real time within a few seconds of starting the seed producer.
+> **`src/dashboard/index.html` is not yet implemented.**
+>
+> To verify the WebSocket connection is working, connect with `wscat` or a browser console:
+> ```bash
+> npx wscat -c ws://localhost:3000/ws
+> ```
+> You should receive `{ type: "stats", data: { ... } }` messages every 5 seconds and `{ type: "event", data: { ... } }` messages for each processed insert.
 
 ---
 

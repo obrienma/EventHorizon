@@ -76,7 +76,7 @@ Append-only. Events are never updated. A unique index on `raw.id` (the UUID from
 
 Three components:
 
-1. **`changeStream.ts`** — opens a MongoDB change stream on the `events` collection, filtered to `insert` operations. Wraps the stream as an `AsyncIterable<ChangeStreamInsertDocument>`. Handles stream close and reconnection.
+1. **`changeStream.ts`** — opens a MongoDB change stream on the `events` collection, filtered to `insert` operations. Accepts an `onInsert` callback and calls it for each new document. Returns a teardown function used during graceful shutdown.
 
 2. **`wsServer.ts`** — manages connected WebSocket clients. Iterates the change stream and broadcasts each new `StoredEvent` as a `{ type: "event", data }` message. Handles client connect/disconnect without leaking listeners.
 
@@ -152,12 +152,11 @@ sequenceDiagram
     participant RMQ as RabbitMQ
 
     OS->>Server: signal received
-    Server->>Server: fastify.close() — stop accepting new requests
-    Server->>Worker: cancel consumer tag
-    Worker->>Worker: finish processing current message
-    Worker->>CS: close change stream
-    Worker->>Mongo: mongoClient.close()
-    Worker->>RMQ: channel.close() → connection.close()
+    Server->>Server: fastify.close() — drain in-flight HTTP + WS
+    Server->>Server: stopMetrics() — clear stats broadcast interval
+    Server->>CS: closeChangeStream() — stop watching oplog
+    Server->>Mongo: closeDb() — close MongoDB connection
+    Server->>RMQ: closeQueue() — close AMQP channel + connection
     Server->>OS: process.exit(0)
 ```
 

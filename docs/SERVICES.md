@@ -137,13 +137,11 @@ Generic typed repository over a MongoDB collection. Key method: `insertOne()` us
 
 ### `src/observation/changeStream.ts`
 
-Opens a MongoDB change stream on the `events` collection, filtered to `{ operationType: "insert" }`. Returns an `AsyncGenerator<StoredEvent>` — callers use `for await...of` without knowing it's a change stream.
-
-Handles: stream errors, stream close (reconnects with backoff), and cancellation via `AbortSignal`.
+Opens a MongoDB change stream on the `events` collection, filtered to `{ operationType: "insert" }`. Accepts an `onInsert: (event: StoredEvent) => void` callback invoked for each insert. Returns a `() => Promise<void>` teardown function for graceful shutdown.
 
 ### `src/observation/wsServer.ts`
 
-Manages the set of connected WebSocket clients. On new connection: adds to client set, starts piping change stream events as `{ type: "event", data: StoredEvent }` messages. On disconnect: removes from set, no listener leak.
+Manages the set of connected WebSocket clients. Exposes `broadcast(msg: WsMessage)` used by both the change stream handler and the metrics interval in `server.ts`. Manages a heartbeat (ping/pong) to detect and terminate zombie connections.
 
 **WsMessage union:**
 ```ts
@@ -159,7 +157,7 @@ Polls two sources every `STATS_PUSH_INTERVAL_MS` (default 5s):
 - **RabbitMQ Management API** (`GET /api/queues/%2F/events.work`) for queue depth and message rates
 - **MongoDB** `$group` aggregation for event type distribution
 
-Also maintains an in-memory ring buffer of `processedAt` timestamps to compute a rolling `processingRatePerSec` over the last 10s.
+Also maintains an in-memory sliding window of insert timestamps (updated via `recordInsert()` on each change stream delivery) to compute a rolling `processingRatePerSec` over the last `METRICS_RATE_WINDOW_MS` (default 10s). Lag is measured as `Date.now() - doc._id.getTimestamp()` (second precision via ObjectId).
 
 Broadcasts `{ type: "stats", data }` to all connected WS clients.
 
@@ -175,6 +173,8 @@ Broadcasts `{ type: "stats", data }` to all connected WS clients.
 
 ## `src/dashboard/index.html`
 
+> **Not yet implemented.**
+
 Single HTML file, inline JS, no build step. Connects to `ws://localhost:3000/live` and renders three panels:
 
 1. **Live feed** — scrolling list, type + classification badges, click to select
@@ -184,6 +184,8 @@ Single HTML file, inline JS, no build step. Connects to `ws://localhost:3000/liv
 ---
 
 ## `src/seed/producer.ts`
+
+> **Not yet implemented.**
 
 CLI script. Generates random events and POSTs them to `POST /events`.
 

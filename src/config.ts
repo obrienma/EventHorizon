@@ -12,6 +12,7 @@ const ConfigSchema = z.object({
 
   // RabbitMQ
   RABBITMQ_URL: z.string().min(1),
+  RABBITMQ_MANAGEMENT_URL: z.string().url().default("http://guest:guest@localhost:15672"),
 
   // Queue / Exchange names
   EXCHANGE_NAME: z.string().min(1),

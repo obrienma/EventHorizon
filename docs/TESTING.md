@@ -102,6 +102,38 @@ it("returns 422 when type discriminator is invalid", async () => {
 
 ---
 
+### Worker (`src/processing/worker.test.ts`)
+
+**Type:** Unit — mocks amqplib and the storage repository.
+
+The AMQP channel and `saveEvent`/`saveFailedEvent` are mocked via `vi.mock()`. The message handler is captured from `channel.consume()` and invoked directly in tests.
+
+Covers:
+- Happy path: `saveEvent` called, `channel.ack()` fired
+- Retry path: transient error increments `x-retry-count` header and republishes
+- Dead-letter path: after 3 retries, `saveFailedEvent` called, `channel.nack()` fired
+- Schema validation failure: invalid message nacked without calling storage
+- Null message (broker cancellation): no ack/nack
+
+---
+
+### Metrics (`src/observation/metrics.test.ts`)
+
+**Type:** Unit — mocks MongoDB and stubs `fetch` + timers.
+
+Uses `vi.useFakeTimers()` + `vi.setSystemTime()` to pin the clock and `vi.advanceTimersByTimeAsync()` to trigger the stats interval without real time passing.
+
+Covers:
+- Stats message broadcast on each tick
+- All required `StatsPayload` fields present
+- MongoDB count values flow into the payload
+- Queue depth warning/critical thresholds reflected in `queueDepthStatus`
+- `stopMetrics()` prevents further broadcasts
+- `processingRatePerSec` reflects `recordInsert()` calls within the window
+- `changeStreamLagMs` reflects ObjectId timestamp lag
+
+---
+
 ## What's Not Tested (and Why)
 
 | Layer | Reason |
@@ -110,7 +142,7 @@ it("returns 422 when type discriminator is invalid", async () => {
 | **WebSocket broadcast** | Hard to test timing reliably. Covered by the dashboard manually. |
 | **RabbitMQ worker** | AMQP channel mocks are fragile. The worker's logic (`enrich` + `classify` + `repository`) is tested individually. |
 | **Graceful shutdown** | Process signal handling is hard to assert in tests. Verify manually with `Ctrl+C` during active load. |
-| **Metrics poller** | Polls external APIs on a timer — test the pure transformation logic instead. |
+| **Change stream delivery** | Requires a real MongoDB replica set — `mongodb-memory-server` supports it but adds significant test complexity. Verify manually. |
 
 ---
 
@@ -133,10 +165,11 @@ npx vitest run --coverage
 src/
   ingestion/
     event.schema.ts
-    event.schema.test.ts       ← schema unit tests
     event.routes.ts
-    event.routes.test.ts       ← route integration tests
+    event.routes.test.ts       ← route integration tests (Fastify inject + vi.mock)
   processing/
+    worker.ts
+    worker.test.ts             ← worker unit tests (amqplib mocked)
     processors/
       enrich.ts
       enrich.test.ts           ← processor unit tests
@@ -144,5 +177,8 @@ src/
       classify.test.ts         ← processor unit tests
   storage/
     event.repository.ts
-    event.repository.test.ts   ← repository integration tests
+    event.repository.test.ts   ← repository integration tests (mongodb-memory-server)
+  observation/
+    metrics.ts
+    metrics.test.ts            ← metrics unit tests (vi.useFakeTimers + fetch stub)
 ```

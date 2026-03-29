@@ -6,6 +6,7 @@ import { connectDb, closeDb } from "./storage/db.js";
 import { ensureIndexes } from "./storage/event.repository.js";
 import { startChangeStream } from "./observation/changeStream.js";
 import { registerWsServer, broadcast } from "./observation/wsServer.js";
+import { startMetrics, recordInsert } from "./observation/metrics.js";
 
 export const app = Fastify({ logger: true });
 
@@ -18,9 +19,12 @@ await connectDb();
 await ensureIndexes();
 await connectQueue();
 
-const closeChangeStream = startChangeStream((event) =>
-  broadcast({ type: "event", data: event }),
-);
+const closeChangeStream = startChangeStream((event) => {
+  recordInsert(event);
+  broadcast({ type: "event", data: event });
+});
+
+const stopMetrics = startMetrics(broadcast);
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 // Order matters — see CLAUDE.md. Fastify drains in-flight requests first.
@@ -36,8 +40,9 @@ async function shutdown(signal: string): Promise<void> {
 
   try {
     await app.close();               // step 1: drain in-flight HTTP + WS
-    await closeChangeStream();       // step 2: stop watching oplog
-    await closeDb();                 // step 3: close MongoDB
+    stopMetrics();                   // step 2: stop stats broadcast interval
+    await closeChangeStream();       // step 3: stop watching oplog
+    await closeDb();                 // step 4: close MongoDB
     await closeQueue();              // step 4: close AMQP channel + connection
     app.log.info("shutdown complete");
     process.exit(0);
