@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EventHorizon</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --surface-2: #21262d;
+      --border:    #30363d;
+      --text:      #e6edf3;
+      --muted:     #7d8590;
+      --green:     #3fb950;
+      --yellow:    #d29922;
+      --red:       #f85149;
+      --blue:      #58a6ff;
+      --purple:    #bc8cff;
+      --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      overflow: hidden;
+    }
+
+    /* ── Stats bar ─────────────────────────────────────────────────────────── */
+    #stats-bar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    #title { font-weight: 700; font-size: 14px; letter-spacing: 0.05em; color: var(--blue); }
+
+    .stat { display: flex; align-items: center; gap: 6px; }
+    .stat-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-value { font-weight: 600; font-size: 14px; font-family: var(--font-mono); }
+
+    .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); flex-shrink: 0; }
+    .conn-dot.on { background: var(--green); }
+
+    .dist { display: flex; gap: 12px; margin-left: auto; }
+    .dist-item { font-size: 11px; color: var(--muted); }
+    .dist-item b { color: var(--text); font-weight: 600; }
+
+    /* ── Main layout ───────────────────────────────────────────────────────── */
+    main {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      overflow: hidden;
+    }
+
+    /* ── Feed ──────────────────────────────────────────────────────────────── */
+    #feed { border-right: 1px solid var(--border); overflow-y: auto; }
+
+    .feed-item {
+      display: grid;
+      grid-template-columns: auto auto 1fr auto;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .feed-item:hover    { background: var(--surface); }
+    .feed-item.selected { background: var(--surface-2); border-left: 2px solid var(--blue); padding-left: 10px; }
+
+    .badge {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .badge-pipeline { background: #1c3a6e; color: var(--blue); }
+    .badge-sensor   { background: #2d1b69; color: var(--purple); }
+    .badge-app      { background: #0d3a2d; color: #39d353; }
+    .badge-normal   { background: #0d2b1f; color: var(--green); }
+    .badge-warning  { background: #2b2000; color: var(--yellow); }
+    .badge-critical { background: #2b0f0f; color: var(--red); }
+    .badge-failed   { background: #2b0f0f; color: var(--red); }
+
+    .feed-summary { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .feed-time    { font-size: 11px; color: var(--muted); font-family: var(--font-mono); white-space: nowrap; }
+
+    /* ── Detail ────────────────────────────────────────────────────────────── */
+    #detail { overflow-y: auto; padding: 16px; background: var(--bg); }
+
+    #detail-empty {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      margin-top: 48px;
+    }
+
+    #detail-content { display: none; }
+
+    .detail-header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+
+    .detail-section { margin-bottom: 16px; }
+    .detail-section-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .detail-meta {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      display: grid;
+      gap: 5px;
+    }
+    .meta-row   { display: flex; gap: 8px; font-size: 12px; }
+    .meta-key   { color: var(--muted); min-width: 88px; flex-shrink: 0; }
+    .meta-val   { font-family: var(--font-mono); word-break: break-all; }
+
+    .tags { display: flex; gap: 4px; flex-wrap: wrap; }
+    .tag  {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 6px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.6;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .jk { color: #79c0ff; }   /* key    */
+    .js { color: #a5d6ff; }   /* string */
+    .jn { color: #f2cc60; }   /* number */
+    .jb { color: #ff7b72; }   /* bool   */
+    .jz { color: var(--muted); } /* null */
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<header id="stats-bar">
+  <span id="title">EventHorizon</span>
+
+  <div class="stat">
+    <div class="conn-dot" id="conn-dot"></div>
+    <span class="stat-label" id="conn-label">disconnected</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">processed</span>
+    <span class="stat-value" id="s-processed">—</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">failed</span>
+    <span class="stat-value" id="s-failed" style="color:var(--muted)">—</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">queue</span>
+    <span class="stat-value" id="s-queue">—</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">rate</span>
+    <span class="stat-value" id="s-rate">—</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">lag</span>
+    <span class="stat-value" id="s-lag">—</span>
+  </div>
+
+  <!-- TODO: replace with a mini bar chart once distribution data proves useful -->
+  <div class="dist">
+    <span class="dist-item">pipeline <b id="d-pipeline">0</b></span>
+    <span class="dist-item">sensor <b id="d-sensor">0</b></span>
+    <span class="dist-item">app <b id="d-app">0</b></span>
+  </div>
+</header>
+
+<main>
+  <section id="feed"></section>
+  <section id="detail">
+    <div id="detail-empty">Select an event to inspect</div>
+    <div id="detail-content"></div>
+  </section>
+</main>
+
+<script>
+  // ── Config ──────────────────────────────────────────────────────────────────
+  const MAX_FEED_ITEMS = 100;
+  const WS_URL = `ws://${location.host}/ws`;
+
+  // ── State ───────────────────────────────────────────────────────────────────
+  let reconnectDelay = 2_000;
+  let selectedId = null;
+
+  // ── WebSocket ───────────────────────────────────────────────────────────────
+  function connect() {
+    const ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      reconnectDelay = 2_000;
+      setConnected(true);
+    };
+
+    ws.onmessage = ({ data }) => {
+      let msg;
+      try { msg = JSON.parse(data); } catch { return; }
+
+      if      (msg.type === 'ping')  ws.send('pong');
+      else if (msg.type === 'stats') updateStats(msg.data);
+      else if (msg.type === 'event') prependEvent(msg.data);
+    };
+
+    ws.onclose = () => {
+      setConnected(false);
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
+    };
+
+    ws.onerror = () => ws.close();
+  }
+
+  // ── Connection indicator ────────────────────────────────────────────────────
+  function setConnected(on) {
+    document.getElementById('conn-dot').className   = 'conn-dot' + (on ? ' on' : '');
+    document.getElementById('conn-label').textContent = on ? 'connected' : 'reconnecting…';
+  }
+
+  // ── Stats bar ───────────────────────────────────────────────────────────────
+  const QUEUE_COLOR = { ok: 'var(--green)', warning: 'var(--yellow)', critical: 'var(--red)' };
+
+  function updateStats(s) {
+    setText('s-processed', s.totalProcessed.toLocaleString());
+
+    const fe = document.getElementById('s-failed');
+    fe.textContent  = s.failedCount.toLocaleString();
+    fe.style.color  = s.failedCount > 0 ? 'var(--red)' : 'var(--muted)';
+
+    const qe = document.getElementById('s-queue');
+    qe.textContent = s.queueDepth.toLocaleString();
+    qe.style.color = QUEUE_COLOR[s.queueDepthStatus] ?? 'var(--text)';
+
+    setText('s-rate', s.processingRatePerSec.toFixed(2) + '/s');
+    setText('s-lag',  s.changeStreamLagMs + 'ms');
+
+    const d = s.eventTypeDistribution ?? {};
+    setText('d-pipeline', (d.pipeline ?? 0).toLocaleString());
+    setText('d-sensor',   (d.sensor   ?? 0).toLocaleString());
+    setText('d-app',      (d.app      ?? 0).toLocaleString());
+  }
+
+  // ── Live feed ───────────────────────────────────────────────────────────────
+  function prependEvent(event) {
+    const feed = document.getElementById('feed');
+    while (feed.children.length >= MAX_FEED_ITEMS) feed.removeChild(feed.lastChild);
+
+    const isProcessed = event.status === 'processed';
+    const classBadge  = isProcessed
+      ? badge(event.processed.classification, event.processed.classification)
+      : badge('failed', 'failed');
+
+    const item = document.createElement('div');
+    item.className   = 'feed-item';
+    item.dataset.id  = event._id;
+    item.innerHTML   = `
+      ${badge(event.raw.type, event.raw.type)}
+      ${classBadge}
+      <span class="feed-summary">${esc(formatSummary(event))}</span>
+      <span class="feed-time">${new Date(event.raw.timestamp).toLocaleTimeString()}</span>
+    `;
+    item.addEventListener('click', () => selectEvent(event, item));
+    feed.prepend(item);
+  }
+
+  function formatSummary(event) {
+    const p = event.raw.payload;
+    if (event.raw.type === 'pipeline') return `${p.pipelineId} / ${p.step} — ${p.status}`;
+    if (event.raw.type === 'sensor')   return `${p.sensorId}: ${p.value}${p.unit} (${p.metric})`;
+    return `${event.raw.source} → ${p.action}${p.userId ? ' · ' + p.userId : ''}`;
+  }
+
+  // ── Event detail ────────────────────────────────────────────────────────────
+  function selectEvent(event, itemEl) {
+    document.querySelectorAll('.feed-item.selected').forEach(el => el.classList.remove('selected'));
+    itemEl.classList.add('selected');
+    selectedId = event._id;
+
+    document.getElementById('detail-empty').style.display  = 'none';
+    const content = document.getElementById('detail-content');
+    content.style.display = 'block';
+    content.innerHTML     = renderDetail(event);
+  }
+
+  function renderDetail(event) {
+    const isProcessed = event.status === 'processed';
+    const classBadge  = isProcessed
+      ? badge(event.processed.classification, event.processed.classification)
+      : badge('failed', 'failed');
+
+    let metaRows = `
+      <div class="meta-row"><span class="meta-key">id</span><span class="meta-val">${esc(event.raw.id)}</span></div>
+      <div class="meta-row"><span class="meta-key">source</span><span class="meta-val">${esc(event.raw.source)}</span></div>
+      <div class="meta-row"><span class="meta-key">timestamp</span><span class="meta-val">${esc(event.raw.timestamp)}</span></div>
+    `;
+    if (isProcessed) metaRows += `
+      <div class="meta-row"><span class="meta-key">receivedAt</span><span class="meta-val">${esc(new Date(event.processed.receivedAt).toISOString())}</span></div>
+      <div class="meta-row"><span class="meta-key">enrichedAt</span><span class="meta-val">${esc(new Date(event.processed.enrichedAt).toISOString())}</span></div>
+    `;
+
+    const tagsHtml = isProcessed && event.processed.tags.length > 0
+      ? `<div class="detail-section">
+           <div class="detail-section-title">Tags</div>
+           <div class="tags">${event.processed.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+         </div>`
+      : '';
+
+    return `
+      <div class="detail-header">${badge(event.raw.type, event.raw.type)}${classBadge}</div>
+      <div class="detail-section">
+        <div class="detail-section-title">Metadata</div>
+        <div class="detail-meta">${metaRows}</div>
+      </div>
+      ${tagsHtml}
+      <div class="detail-section">
+        <div class="detail-section-title">Payload</div>
+        <pre>${jsonHL(event.raw.payload)}</pre>
+      </div>
+      <div class="detail-section">
+        <div class="detail-section-title">Raw document</div>
+        <pre>${jsonHL(event)}</pre>
+      </div>
+    `;
+  }
+
+  // ── JSON syntax highlighter ─────────────────────────────────────────────────
+  function jsonHL(obj) {
+    return esc(JSON.stringify(obj, null, 2)).replace(
+      /(&quot;(?:\\.|[^&])*&quot;(\s*:)?|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+      (m) => {
+        if (m.startsWith('&quot;')) return m.endsWith(':')
+          ? `<span class="jk">${m}</span>`
+          : `<span class="js">${m}</span>`;
+        if (m === 'true' || m === 'false') return `<span class="jb">${m}</span>`;
+        if (m === 'null')  return `<span class="jz">${m}</span>`;
+        return `<span class="jn">${m}</span>`;
+      }
+    );
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+  function badge(cls, label) {
+    return `<span class="badge badge-${esc(cls)}">${esc(label)}</span>`;
+  }
+
+  function setText(id, val) {
+    document.getElementById(id).textContent = val;
+  }
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // ── Boot ────────────────────────────────────────────────────────────────────
+  connect();
+</script>
+</body>
+</html>

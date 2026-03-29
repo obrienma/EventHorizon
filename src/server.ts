@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import { readFileSync } from "fs";
 import { config } from "./config.js";
 import { eventRoutes } from "./ingestion/event.routes.js";
 import { connectQueue, closeQueue } from "./processing/queue.js";
@@ -13,6 +14,9 @@ export const app = Fastify({ logger: true });
 // ── Routes ────────────────────────────────────────────────────────────────────
 void app.register(eventRoutes);
 await registerWsServer(app);
+
+const dashboardHtml = readFileSync(new URL("./dashboard/index.html", import.meta.url));
+app.get("/dashboard", (_req, reply) => reply.type("text/html").send(dashboardHtml));
 
 // ── Startup ───────────────────────────────────────────────────────────────────
 await connectDb();

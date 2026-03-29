@@ -141,7 +141,7 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 4. ~~`src/observation/changeStream.ts` + `src/observation/wsServer.ts`~~ ✓
 5. ~~`src/observation/metrics.ts`~~ ✓
 6. ~~`src/seed/producer.ts`~~ ✓
-7. `src/dashboard/index.html`
+7. ~~`src/dashboard/index.html`~~ ✓
 8. Tests colocated per layer (Fastify inject + vi.mock → real mongodb-memory-server at bottom)
 
 **Tests written so far:**

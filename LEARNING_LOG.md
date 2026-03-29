@@ -679,3 +679,35 @@ A timer that *should* be background but isn't `.unref()`'d keeps the event loop 
 **A:** Both are maintenance timers — they serve the system while it's running but shouldn't own the process lifecycle. Without `.unref()`, they'd keep the event loop alive after all real work (HTTP, MongoDB, AMQP) has been shut down, preventing natural process exit. They're background workers, not owners.
 
 ---
+
+## Phase 8 — Bug Fix: Credentials in fetch URLs (2026-03-29)
+
+---
+
+### Challenge: Node.js native `fetch` rejects credentials embedded in URLs
+
+**What happened:**
+`RABBITMQ_MANAGEMENT_URL=http://guest:guest@localhost:15672` was passed directly to `fetch()`. Node's native fetch (and the browser Fetch API) threw: `Request cannot be constructed from a URL that includes credentials`. The metrics interval silently swallowed the error and returned `queueDepth: 0` every tick.
+
+**Why fetch rejects them:**
+Credentials in a URL (`user:pass@host`) are a legacy HTTP basic auth convention. The Fetch spec explicitly forbids them because they leak into logs, `Referer` headers, and browser history. The correct mechanism is the `Authorization` header.
+
+**The fix:**
+Parse the URL with `new URL()` to extract `username` and `password`, strip them from the request URL, and pass `Authorization: Basic <base64>` as a header:
+```ts
+const base = new URL(config.RABBITMQ_MANAGEMENT_URL);
+const auth = Buffer.from(`${base.username}:${base.password}`).toString("base64");
+const url  = `${base.protocol}//${base.host}/api/...`;
+const res  = await fetch(url, { headers: { Authorization: `Basic ${auth}` } });
+```
+
+**Anti-Pattern Avoided: Credentials in URLs**
+`http://user:pass@host` works in older HTTP clients (curl, axios) that don't enforce the Fetch spec, so it's easy to carry this habit into Node 18+ native fetch or browser code — where it breaks silently or with a cryptic error. Always use `Authorization` headers for HTTP basic auth.
+
+**Q:** Why does `fetch('http://user:pass@host/path')` throw in Node.js 18+?
+**A:** The Fetch spec explicitly forbids credentials in URLs — they leak into logs, `Referer` headers, and browser history. Node's native fetch enforces this. The fix is to parse the URL with `new URL()`, extract `username` and `password`, and send `Authorization: Basic <base64(user:pass)>` as a header instead.
+
+**Q:** You set a config var like `RABBITMQ_MANAGEMENT_URL=http://guest:guest@localhost:15672`. It works in your shell with `curl` but breaks with `fetch`. Why?
+**A:** `curl` predates the Fetch spec and happily accepts credentials in URLs. Node's native `fetch` (and browsers) implement the Fetch spec which bans them for security. Same URL, different client, different behaviour — always test HTTP calls with the actual client your code uses.
+
+---

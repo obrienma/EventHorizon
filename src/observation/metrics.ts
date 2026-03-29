@@ -73,9 +73,15 @@ async function fetchQueueDepth(): Promise<number> {
   // Management API endpoint: GET /api/queues/{vhost}/{queue}
   // vhost "/" must be URL-encoded as "%2F".
   // TODO: make the vhost configurable if multi-vhost setups are needed.
+  //
+  // Note: credentials cannot be embedded in the URL — Node's native fetch
+  // (and browsers) reject them for security reasons (leaks into logs/referrer).
+  // Extract them and pass as a Basic Authorization header instead.
   try {
-    const url = `${config.RABBITMQ_MANAGEMENT_URL}/api/queues/%2F/${encodeURIComponent(config.QUEUE_NAME)}`;
-    const res = await fetch(url);
+    const base = new URL(config.RABBITMQ_MANAGEMENT_URL);
+    const auth = Buffer.from(`${base.username}:${base.password}`).toString("base64");
+    const url = `${base.protocol}//${base.host}/api/queues/%2F/${encodeURIComponent(config.QUEUE_NAME)}`;
+    const res = await fetch(url, { headers: { Authorization: `Basic ${auth}` } });
     if (!res.ok) {
       console.warn(`[metrics] management API responded ${res.status} — queue depth unavailable`);
       return 0;

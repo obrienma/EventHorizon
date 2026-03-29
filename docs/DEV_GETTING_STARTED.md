@@ -79,13 +79,11 @@ npm run seed -- --dry-run
 
 ## 7. Open the Dashboard
 
-> **`src/dashboard/index.html` is not yet implemented.**
->
-> To verify the WebSocket connection is working, connect with `wscat` or a browser console:
-> ```bash
-> npx wscat -c ws://localhost:3000/ws
-> ```
-> You should receive `{ type: "stats", data: { ... } }` messages every 5 seconds and `{ type: "event", data: { ... } }` messages for each processed insert.
+```
+http://localhost:3000/dashboard
+```
+
+You should see events flowing in real time within a few seconds of starting the seed producer. The stats bar updates every 5 seconds. Click any event in the feed to inspect its full payload and metadata in the detail panel.
 
 ---
 

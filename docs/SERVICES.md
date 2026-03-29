@@ -173,8 +173,6 @@ Broadcasts `{ type: "stats", data }` to all connected WS clients.
 
 ## `src/dashboard/index.html`
 
-> **Not yet implemented.**
-
 Single HTML file, inline JS, no build step. Connects to `ws://localhost:3000/live` and renders three panels:
 
 1. **Live feed** — scrolling list, type + classification badges, click to select

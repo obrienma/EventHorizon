@@ -1,6 +1,14 @@
 # EventHorizon
 
-A **Reactive Data Plane** — an event-driven telemetry pipeline built to practice advanced TypeScript backend patterns. The point isn't the domain; it's the plumbing.
+EventHorizon is a **real-time event pipeline** — you send telemetry events in, they get validated, queued, processed, stored, and pushed live to a browser dashboard. All within a second or two of arriving.
+
+It's a **hands-on demo** of backend distributed systems patterns: message queues, change streams, WebSockets, idempotent storage, and graceful shutdown. The fake telemetry domain is just scaffolding — the interesting part is how the pieces are wired together.
+
+---
+
+> **For the technically curious:** this is a *Reactive Data Plane* — four explicit processing stages (Ingestion → Processing → Storage → Observation) connected by RabbitMQ and MongoDB. Data flows one direction only. Each stage is independently deployable and horizontally scalable.
+
+---
 
 Ingest fake telemetry events → validate → queue → worker enriches → store append-only → change stream → WebSocket → live dashboard.
 
@@ -155,4 +163,4 @@ src/
 
 ### 🚧 Phase 6 — Dashboard + Seed
 - [x] `src/seed/producer.ts` — CLI fake event generator
-- [ ] `src/dashboard/index.html` — live feed, stats bar, event detail (vanilla JS)
+- [x] `src/dashboard/index.html` — live feed, stats bar, event detail (vanilla JS)
