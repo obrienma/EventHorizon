@@ -130,7 +130,7 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 
 ## Current Build Status
 
-**Completed:** project scaffold, tsconfig, docker-compose, .env, vitest config, README, all docs, copilot-instructions.md, CLAUDE.md, `src/config.ts`, `src/ingestion/event.schema.ts`, `src/global.d.ts`, `src/server.ts`, `src/ingestion/event.routes.ts`, `src/processing/queue.ts`, `src/processing/worker.ts`, `src/processors/enrich.ts`, `src/processors/classify.ts`, `src/storage/db.ts`, `src/storage/event.repository.ts`.
+**Completed:** project scaffold, tsconfig, docker-compose, .env, vitest config, README, all docs, copilot-instructions.md, CLAUDE.md, `src/config.ts`, `src/ingestion/event.schema.ts`, `src/global.d.ts`, `src/server.ts`, `src/ingestion/event.routes.ts`, `src/processing/queue.ts`, `src/processing/worker.ts`, `src/processors/enrich.ts`, `src/processors/classify.ts`, `src/storage/db.ts`, `src/storage/event.repository.ts`, `src/observation/changeStream.ts`, `src/observation/wsServer.ts`.
 
 **Build order: top-down** (start at the entry point, add each layer as it's called)
 
@@ -138,11 +138,20 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 1. ~~`src/processing/queue.ts` — RabbitMQ topology + real `publishEvent()`~~ ✓
 2. ~~`src/processing/worker.ts` + `processors/enrich.ts` + `processors/classify.ts`~~ ✓
 3. ~~`src/storage/db.ts` + `src/storage/event.repository.ts`~~ ✓
-4. `src/observation/changeStream.ts` + `src/observation/wsServer.ts`
+4. ~~`src/observation/changeStream.ts` + `src/observation/wsServer.ts`~~ ✓
 5. `src/observation/metrics.ts`
 6. `src/seed/producer.ts`
 7. `src/dashboard/index.html`
 8. Tests colocated per layer (Fastify inject + vi.mock → real mongodb-memory-server at bottom)
+
+**Tests written so far:**
+- `src/processors/enrich.test.ts` ✓
+- `src/processors/classify.test.ts` ✓
+- `src/storage/event.repository.test.ts` ✓ (mongodb-memory-server)
+- `src/ingestion/event.routes.test.ts` ✓ (Fastify inject + vi.mock)
+- `src/processing/worker.test.ts` — IN PROGRESS (3 tests failing, isolated run passes, full suite fails — suspected cross-test vi.mock interaction)
+
+**Worker test issue:** Tests that assert saveEvent/saveFailedEvent were CALLED fail in full suite but pass in isolation. Tests that use mockRejectedValueOnce pass in both. Root cause not yet identified.
 
 ---
 

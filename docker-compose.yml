@@ -2,15 +2,22 @@ services:
   mongo:
     image: mongo:7
     container_name: eventhorizon-mongo
+    # --replSet rs0: run as a single-node replica set.
+    # Change streams are built on the oplog, which only exists on replica set members.
+    # A standalone instance has no oplog and throws MongoServerError on watch().
+    # Single-node RS looks identical to a standalone from the app's perspective.
+    command: ["--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      # Auto-initiate the replica set on first startup; no-op on subsequent starts.
+      test: ["CMD", "mongosh", "--eval", "try { rs.status() } catch(e) { rs.initiate() }"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   rabbitmq:
     image: rabbitmq:3-management-alpine

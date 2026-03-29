@@ -7,6 +7,25 @@ vi.mock("../processing/queue.js", () => ({
   publishEvent: vi.fn(),
 }));
 
+vi.mock("../storage/db.js", () => ({
+  connectDb: vi.fn().mockResolvedValue(undefined),
+  closeDb: vi.fn().mockResolvedValue(undefined),
+  getDb: vi.fn(),
+}));
+
+vi.mock("../storage/event.repository.js", () => ({
+  ensureIndexes: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../observation/changeStream.js", () => ({
+  startChangeStream: vi.fn().mockReturnValue(() => Promise.resolve()),
+}));
+
+vi.mock("../observation/wsServer.js", () => ({
+  registerWsServer: vi.fn().mockResolvedValue(undefined),
+  broadcast: vi.fn(),
+}));
+
 const validEvent = {
   id: "123e4567-e89b-42d3-a456-426614174000",
   timestamp: "2026-01-01T00:00:00.000Z",

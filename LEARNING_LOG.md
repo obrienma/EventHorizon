@@ -531,3 +531,97 @@ Declaring `const event = EventSchema.parse(raw)` inside the `try` block makes `e
 **A:** `const` inside a try block is scoped to that block — unreachable in catch. The dead-letter path needs to call `saveFailedEvent(event)`, but only if we successfully parsed a valid event (parsing failure means there's nothing to save). Hoisting with `let event: AppEvent | undefined` and guarding with `if (event !== undefined)` solves both the scope problem and the parsing-failure case.
 
 ---
+
+## Phase 4 — Observation Plane (2026-03-28)
+
+Files built: `src/observation/changeStream.ts`, `src/observation/wsServer.ts`
+Also changed: `docker-compose.yml`, `.env`, `src/server.ts`, `src/ingestion/event.routes.test.ts`
+
+---
+
+### Pattern: Event-Driven Push (Change Streams)
+
+**Where it appears:** `src/observation/changeStream.ts`
+
+**What it is:**
+Instead of clients asking "are there new events?" on a timer (polling), the system inverts control: MongoDB pushes each committed insert to the observer the moment it appears on the oplog. The observer then fans out to WebSocket clients.
+
+**Why it beats polling:**
+A 1-second poll on a busy collection returns all documents since the last check — most already seen. A change stream delivers exactly one notification per insert, with zero redundant reads. Latency also drops from up to `poll_interval` to near-zero.
+
+**The infrastructure requirement:**
+Change streams are built on MongoDB's oplog, which only exists on replica set members. A standalone instance has no oplog and throws `MongoServerError` on `watch()`. The fix: run MongoDB as a single-node replica set (`--replSet rs0`). From the application's perspective it is identical to a standalone — one node, same connection string — but it has an oplog.
+
+**`directConnection=true` in the URI:**
+When a replica set's member reports its hostname to the driver, it uses the container's internal hostname — not `localhost`. Without `directConnection=true`, the driver performs RS topology discovery and may try to connect to the container hostname directly, which fails from the host machine. `directConnection=true` skips discovery and connects to the specified host directly. Change streams still work because the node IS a replica set member.
+
+**Q:** Why can't you open a change stream on a standalone MongoDB instance?
+**A:** Change streams are built on the oplog — a capped collection that records every write operation, used for replication. A standalone instance has no replication and therefore no oplog. The `$changeStream` aggregation stage requires the oplog to exist, so MongoDB rejects it on standalone with a `MongoServerError`. Running as a single-node replica set (`--replSet rs0`) adds the oplog without requiring multiple nodes.
+
+**Q:** What does `directConnection=true` fix in a docker-compose MongoDB setup?
+**A:** When a MongoDB replica set member reports itself to the driver during topology discovery, it uses its container hostname (e.g. `eventhorizon-mongo`), not `localhost`. The driver then tries to connect to that hostname, which isn't reachable from the host machine. `directConnection=true` tells the driver to skip topology discovery and connect directly to the URI's host (`localhost:27017`). Change streams still work because the node is a replica set member with an oplog.
+
+---
+
+### Pattern: Fan-out
+
+**Where it appears:** `broadcast()` in `src/observation/wsServer.ts`
+
+**What it is:**
+One incoming message (a change stream insert event) must be delivered to N connected WebSocket clients. `broadcast()` iterates the client `Map` and calls `socket.send()` on each. Clients are independent — a slow or erroring client is removed and does not block delivery to others.
+
+**Q:** How does the broadcast function handle a client that errors mid-send?
+**A:** `socket.send()` is wrapped in a try/catch per client. If it throws, the client is removed from the Map and the loop continues to the next client. A single bad client never blocks the fan-out to the rest.
+
+---
+
+### Anti-Pattern Avoided: Zombie Connections
+
+**Where it appears:** Heartbeat in `registerWsServer()`
+
+**The trap:**
+TCP connections can appear open when the remote peer is actually gone (process killed, network partition). Without a heartbeat, the server accumulates stale `Map` entries. Each broadcast iterates them, burning time on sockets that will never receive the message.
+
+**The fix — ping/pong heartbeat:**
+Every `PING_INTERVAL_MS` (30s):
+1. If `isAlive === false` → zombie: `socket.terminate()`, remove from Map
+2. If `isAlive === true` → set `false`, send `{ type: "ping" }`
+
+On receiving `"pong"` from the client: set `isAlive = true`.
+
+A live client resets its flag within 30s. A zombie never responds, gets terminated on the next cycle.
+
+**`Map` over `Set`:** A `Set<WebSocket>` would suffice for broadcast, but zombie detection requires per-client state (`isAlive`). A `Map<WebSocket, boolean>` stores both in one structure.
+
+**`heartbeat.unref()`:** Prevents the `setInterval` from keeping the Node.js event loop alive after all other handles close. Without it, a graceful shutdown would hang waiting for the timer to fire.
+
+**Q:** Why use `Map<WebSocket, boolean>` instead of `Set<WebSocket>` for tracking clients?
+**A:** Fan-out only needs a Set — iterate and send. But zombie detection requires per-client state: "did this client respond to the last ping?" A Map stores both the socket and the `isAlive` flag in one structure. A Set would require a separate `Map<WebSocket, boolean>` anyway.
+
+**Q:** What does `heartbeat.unref()` do and why does it matter?
+**A:** `setInterval` keeps the Node.js event loop alive as long as it's running. If the server is shutting down and all other handles (HTTP, WebSocket, MongoDB) are closed, the event loop would still block waiting for the next heartbeat tick. `.unref()` marks the timer as "background" — it fires normally while other handles are active, but won't prevent the process from exiting when everything else has closed.
+
+---
+
+### Decision: Change Stream lives in the server process, not the worker
+
+**The question:** The worker writes events to MongoDB. Why doesn't the change stream also live in the worker, since it's watching those same writes?
+
+**The answer — separate processes, no shared memory:**
+The worker and server are separate OS processes. `broadcast()` holds a `Map<WebSocket, boolean>` of live client sockets. Those sockets only exist in the server process's memory. The worker cannot reach them — calling `broadcast()` from the worker is physically impossible without adding another IPC channel.
+
+**MongoDB as the process boundary:**
+```
+worker process                     server process
+──────────────                     ──────────────
+RabbitMQ → process → insertOne()   watch(oplog) → broadcast() → WS clients
+```
+The worker doesn't know the server exists. The server doesn't know the worker exists. They are decoupled through MongoDB — the worker writes, the oplog records it, the change stream picks it up. This is Event-Driven Push applied at the process boundary.
+
+**The alternative is worse:**
+If the change stream were in the worker, it would need a way to send events across the process boundary to the server's WebSocket clients. That means another IPC channel — a shared Redis pub/sub, an internal HTTP call, another queue. You would be reinventing a message bus you already have. MongoDB's oplog provides that notification channel for free.
+
+**Q:** Why is the change stream wired into the server process rather than the worker process, even though the worker is the one writing to MongoDB?
+**A:** The worker and server are separate OS processes with no shared memory. `broadcast()` holds live WebSocket client sockets that only exist in the server process — the worker can't call it. MongoDB acts as the decoupling boundary: the worker writes, the oplog records it, the server's change stream picks it up and fans out to clients. Putting the change stream in the worker would require a new IPC channel to reach the server's sockets — re-inventing a message bus that MongoDB's oplog already provides for free.
+
+---
