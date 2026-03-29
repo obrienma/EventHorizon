@@ -2,7 +2,7 @@
 
 EventHorizon is a **real-time event pipeline** — you send telemetry events in, they get validated, queued, processed, stored, and pushed live to a browser dashboard. All within a second or two of arriving.
 
-It's a **hands-on demo** of backend distributed systems patterns: message queues, change streams, WebSockets, idempotent storage, and graceful shutdown. The fake telemetry domain is just scaffolding — the interesting part is how the pieces are wired together.
+It's a **hands-on demo** of backend distributed systems patterns: message queues, change streams, WebSockets, idempotent storage, and graceful shutdown. The telemetry domain is just scaffolding — the interesting part is how the pieces are wired together.
 
 ---
 
@@ -10,30 +10,24 @@ It's a **hands-on demo** of backend distributed systems patterns: message queues
 
 ---
 
-Ingest fake telemetry events → validate → queue → worker enriches → store append-only → change stream → WebSocket → live dashboard.
+Ingest telemetry events → validate → queue → worker enriches → store append-only → change stream → WebSocket → live dashboard.
 
-## 🚀 Quick Start
+![EventHorizon - Google Chrome 2026-03-29 12-50-53 (1)](https://github.com/user-attachments/assets/2734d9c0-5e96-4eeb-bb58-ade9e1d98e0f)
 
-```bash
-# 1. Start infrastructure
-npm run infra
-# MongoDB on :27017 | RabbitMQ on :5672 | Management UI on :15672 (guest/guest)
 
-# 2. Copy env
-cp .env.example .env
+## 🧰 Stack
 
-# 3. Install deps
-npm install
+| Layer | Tech | Notes |
+|---|---|---|
+| Language | TypeScript (strict) | `NodeNext` module resolution |
+| Framework | Fastify | High throughput, schema hooks |
+| Message broker | RabbitMQ 3 | Topic exchange + DLX dead-letter pattern |
+| Database | MongoDB 7 | Append-only event log + change streams |
+| Real-time | WebSockets (`@fastify/websocket`) | Raw WS — no socket.io |
+| Validation | Zod | Shared boundary contract across all layers |
+| Testing | Vitest + mongodb-memory-server | ESM-native, colocated tests |
 
-# 4. Start server
-npm run dev
 
-# 5. In a separate terminal, generate fake events
-npm run seed -- --rate=2 --type=all
-
-# 6. Open dashboard
-open http://localhost:3000/dashboard
-```
 
 ## 🏗️ Architecture Overview
 
@@ -55,18 +49,6 @@ flowchart LR
         H[Metrics\npoller] -->|stats every 5s| F
     end
 ```
-
-## 🧰 Stack
-
-| Layer | Tech | Notes |
-|---|---|---|
-| Language | TypeScript (strict) | `NodeNext` module resolution |
-| Framework | Fastify | High throughput, schema hooks |
-| Message broker | RabbitMQ 3 | Topic exchange + DLX dead-letter pattern |
-| Database | MongoDB 7 | Append-only event log + change streams |
-| Real-time | WebSockets (`@fastify/websocket`) | Raw WS — no socket.io |
-| Validation | Zod | Shared boundary contract across all layers |
-| Testing | Vitest + mongodb-memory-server | ESM-native, colocated tests |
 
 ## 📚 Docs
 
@@ -113,28 +95,6 @@ src/
     producer.ts                 # CLI fake event generator
 ```
 
-## 📦 npm Scripts
-
-| Script | Description |
-|---|---|
-| `npm run dev` | Start Fastify server with tsx |
-| `npm run worker` | Start RabbitMQ consumer worker |
-| `npm run seed` | Run fake event generator CLI |
-| `npm run infra` | `docker compose up -d` |
-| `npm run infra:down` | `docker compose down` |
-| `npm test` | Run Vitest suite |
-| `npm run test:watch` | Vitest in watch mode |
-| `npm run typecheck` | `tsc --noEmit` |
-
-## 🧠 TS Patterns Practiced
-
-- Discriminated unions for event types (`pipeline` | `sensor` | `app`)
-- `z.infer<typeof Schema>` — no type duplication across layers
-- Generic repository pattern over MongoDB collections
-- Typed async iterators (MongoDB change streams as `AsyncIterable`)
-- Typed AMQP message payloads across publish/consume boundary
-- Strict null safety across async flows
-
 ## 🗺️ Roadmap
 
 ### ✅ Phase 1 — Foundation
@@ -164,3 +124,48 @@ src/
 ### 🚧 Phase 6 — Dashboard + Seed
 - [x] `src/seed/producer.ts` — CLI fake event generator
 - [x] `src/dashboard/index.html` — live feed, stats bar, event detail (vanilla JS)
+
+## 🚀 Quick Start
+
+```bash
+# 1. Start infrastructure
+npm run infra
+# MongoDB on :27017 | RabbitMQ on :5672 | Management UI on :15672 (guest/guest)
+
+# 2. Copy env
+cp .env.example .env
+
+# 3. Install deps
+npm install
+
+# 4. Start server
+npm run dev
+
+# 5. In a separate terminal, generate fake events
+npm run seed -- --rate=2 --type=all
+
+# 6. Open dashboard
+open http://localhost:3000/dashboard
+```
+
+## 📦 npm Scripts
+
+| Script | Description |
+|---|---|
+| `npm run dev` | Start Fastify server with tsx |
+| `npm run worker` | Start RabbitMQ consumer worker |
+| `npm run seed` | Run fake event generator CLI |
+| `npm run infra` | `docker compose up -d` |
+| `npm run infra:down` | `docker compose down` |
+| `npm test` | Run Vitest suite |
+| `npm run test:watch` | Vitest in watch mode |
+| `npm run typecheck` | `tsc --noEmit` |
+
+## 🧠 TS Patterns Demonstrated
+
+- Discriminated unions for event types (`pipeline` | `sensor` | `app`)
+- `z.infer<typeof Schema>` — no type duplication across layers
+- Generic repository pattern over MongoDB collections
+- Typed async iterators (MongoDB change streams as `AsyncIterable`)
+- Typed AMQP message payloads across publish/consume boundary
+- Strict null safety across async flows
