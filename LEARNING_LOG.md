@@ -625,3 +625,29 @@ If the change stream were in the worker, it would need a way to send events acro
 **A:** The worker and server are separate OS processes with no shared memory. `broadcast()` holds live WebSocket client sockets that only exist in the server process — the worker can't call it. MongoDB acts as the decoupling boundary: the worker writes, the oplog records it, the server's change stream picks it up and fans out to clients. Putting the change stream in the worker would require a new IPC channel to reach the server's sockets — re-inventing a message bus that MongoDB's oplog already provides for free.
 
 ---
+
+## Phase 6 — Bug Fix: Zod v4 UUID Validation (2026-03-28)
+
+---
+
+### Challenge: Zod v4 tightened UUID validation — test fixture UUIDs silently broke
+
+**What happened:**
+Three worker tests were failing with `saveEvent` never being called and `mockCh.ack` never firing. The test fixture used `id: "00000000-0000-0000-0000-000000000001"` — visually UUID-shaped, accepted by Zod v3. In Zod v4, `z.string().uuid()` validates against the full RFC 4122 spec including version nibble (`[1-8]`) and variant nibble (`[89abAB]`). The fixture ID has `0` in both positions and is not the special nil UUID (`...000`), so it fails parse — and the worker never reaches `saveEvent`.
+
+**Why the failure mode was confusing:**
+The tests were asserting `saveEvent` was called zero times, which looks like a mock not being applied — classic `vi.mock()` cross-contamination symptoms. The real cause was upstream: the Zod parse inside the worker threw before the storage call was ever reached. The stderr log showed the ZodError but it was easy to overlook when focused on mock assertion failures.
+
+**The fix:**
+Replace the fixture UUID with a proper RFC 4122 v4 UUID: `550e8400-e29b-41d4-a716-446655440000`.
+
+**Anti-pattern avoided — "UUID-shaped" strings in test fixtures:**
+Using hand-crafted IDs like `00000000-0000-0000-0000-000000000001` is convenient but not standards-compliant. When a validator enforces the spec strictly, these break silently (no compile error, no obvious test failure message). Use real UUIDs in fixtures — `crypto.randomUUID()` or a well-known valid UUID constant.
+
+**Q:** Zod v4 rejects `00000000-0000-0000-0000-000000000001` as a UUID. Why?
+**A:** RFC 4122 requires the 3rd group's leading nibble to be `[1-8]` (version) and the 4th group's leading nibble to be `[89abAB]` (variant). `00000000-0000-0000-0000-000000000001` has `0` in both positions. Zod v4 validates these bits strictly. Zod v3 accepted any UUID-shaped string. The only special-cased all-zero UUID is the exact nil UUID `00000000-0000-0000-0000-000000000000`.
+
+**Q:** A worker test fails because `saveEvent` was never called, but your mock setup looks correct. What should you check first?
+**A:** Check what happens *before* `saveEvent` is reached — specifically, whether the input passes schema validation. If Zod throws, the worker short-circuits and `saveEvent` is never invoked. The assertion failure ("called 0 times") looks like a mock problem but is actually an upstream parse failure. Always read the stderr output alongside the assertion failures.
+
+---
