@@ -437,3 +437,97 @@ The receiver (MongoDB insert) must be **idempotent** — processing the same mes
 **A:** A pure function has no side effects and returns the same output for the same input. In a pipeline, pure processors are trivially unit-testable (no mocks), composable (can be chained freely), and debuggable (reproduce any bug with a single function call and a fixture event).
 
 ---
+
+## Phase 3 — Storage Plane (2026-03-28)
+
+Files wired: `src/storage/db.ts`, `src/storage/event.repository.ts` → `src/processing/worker.ts`
+
+---
+
+### Pattern: Idempotent Receiver
+
+**Where it appears:** `src/storage/event.repository.ts` — `saveEvent()`, `saveFailedEvent()`
+
+**What it is:**
+A receiver that produces the same result whether it processes a message once or many times. In the context of at-least-once delivery, duplicate messages are an expected normal case — not an error.
+
+**How it works here:**
+A unique index `{ "raw.id": 1 }` on the `events` MongoDB collection ensures only one document per event ID. On a duplicate insert, MongoDB throws error code `11000` (duplicate key). `saveEvent()` catches *only* `11000` and silently returns — all other errors re-throw so the worker's retry logic engages.
+
+**Why only swallow 11000:**
+If we caught all `MongoServerError` types, real failures (auth errors, disk full, network drop) would be silently ignored. The message would be acked and permanently lost. Narrow exception handling is load-bearing here.
+
+**Q:** Why does `saveEvent()` only swallow MongoDB error code 11000 — what's wrong with catching all `MongoServerError`?
+**A:** A duplicate key (11000) is a known-safe condition — the event was already persisted on a prior delivery. All other `MongoServerError` types (auth failure, disk full, network drop) represent genuine write failures. Swallowing them would ack the message as if it succeeded, permanently losing it. Only catching 11000 means the Idempotent Receiver absorbs expected duplicates while real errors bubble up to the worker's retry/dead-letter logic.
+
+---
+
+### Pattern: Fail-Fast Startup
+
+**Where it appears:** `startWorker()` — `connectDb()` called before `amqp.connect()`
+
+**What it is:**
+A system that detects invalid preconditions at startup and crashes immediately with a clear error, rather than starting in a degraded state.
+
+**Why MongoDB before RabbitMQ:**
+If the worker connected to RabbitMQ first and MongoDB was unreachable, it would begin consuming and acking messages it cannot persist — silently dropping events. By connecting to MongoDB first, a failure prevents AMQP consumption from ever starting. The broker holds the messages safely; they'll be delivered when the worker restarts healthy.
+
+**Q:** Why must the worker connect to MongoDB *before* connecting to RabbitMQ?
+**A:** If RabbitMQ connected first, the worker would start consuming messages before knowing whether it can persist them. A MongoDB failure at that point would cause acked messages to be lost. Connecting MongoDB first means a failed startup leaves messages safely in the broker queue — at-least-once delivery is preserved.
+
+---
+
+### Anti-Pattern Avoided: Blocking the Nack with a Best-Effort Write
+
+**Where it appears:** Dead-letter path in the worker's catch block
+
+**What it is:**
+When `saveFailedEvent()` throws (e.g., MongoDB is already down when we try to record the failure), we must not let that exception propagate up and block `ch.nack()`. If `ch.nack()` never fires, the message stays unacknowledged indefinitely — head-of-line blocking: all other messages behind it in the prefetch window are also stalled.
+
+**The fix:**
+`await saveFailedEvent(event).catch(...)` — the `.catch()` logs and swallows the error, ensuring `ch.nack()` always executes on the line immediately after. The dead-letter write is best-effort; the routing to `events.dead` must be guaranteed.
+
+**Q:** In the dead-letter path, why is `saveFailedEvent()` wrapped in `.catch()` instead of a try/catch block around both it and `ch.nack()`?
+**A:** If `saveFailedEvent()` throws and the exception propagates, `ch.nack()` never runs. The message stays unacknowledged, blocking the prefetch window — head-of-line blocking. `.catch()` ensures the nack always fires regardless of MongoDB's availability. The MongoDB record is observability-only; the routing decision must be unconditional.
+
+---
+
+### Pattern: Save Before Ack (Write-Then-Acknowledge)
+
+**Where it appears:** `worker.ts` — `await saveEvent(...)` precedes `ch.ack(msg)`
+
+**What it is:**
+In an at-least-once delivery system, `ack` is a destructive operation — the broker removes the message from the queue permanently. You must not call it until you are certain the message has been durably handled.
+
+**The failure mode if flipped (ack-then-write):**
+```ts
+ch.ack(msg);               // broker deletes the message
+await saveEvent(event, …); // throws — MongoDB down, disk full, anything
+// message is gone. no retry, no dead-letter. permanently lost.
+```
+
+**Why save-before-ack is safe even with redelivery:**
+If `saveEvent` succeeds but the `ack` is lost in transit, the broker redelivers the message. The second `saveEvent` call hits the unique index → error code 11000 → silently ignored. The **Idempotent Receiver** is the safety net that makes save-before-ack a viable pattern. Without the unique index, redelivery would cause duplicate documents.
+
+**The principle:**
+Treat `ack` like a `DELETE` on the broker's side. Don't call it until you no longer need the message.
+
+**Q:** Why must `saveEvent()` be called before `ch.ack()`? What happens if you flip the order?
+**A:** `ack` tells the broker to permanently delete the message. If you ack first and the write then fails, the message is gone — no retry, no dead-letter, permanently lost. Saving first means a failed write leaves the message unacknowledged, so the catch block can retry or dead-letter it. The Idempotent Receiver (unique index on `raw.id`) handles the case where the write succeeds but the ack is lost, causing redelivery — the second insert is a silent no-op.
+
+---
+
+### Anti-Pattern Avoided: Variable Scope Trap (try/catch)
+
+**Where it appears:** `event` variable in the worker message handler
+
+**The trap:**
+Declaring `const event = EventSchema.parse(raw)` inside the `try` block makes `event` unreachable in the `catch` block. `saveFailedEvent(event)` in the dead-letter path would fail to compile.
+
+**The fix:**
+`let event: AppEvent | undefined` is hoisted before the `try`. The assignment `event = EventSchema.parse(raw)` happens inside the try. In the dead-letter path: `if (event !== undefined)` guards the `saveFailedEvent` call — this also correctly handles the case where parsing itself was the failure (no valid `AppEvent` to save).
+
+**Q:** Why is `event` declared as `let event: AppEvent | undefined` before the try block instead of `const event` inside it?
+**A:** `const` inside a try block is scoped to that block — unreachable in catch. The dead-letter path needs to call `saveFailedEvent(event)`, but only if we successfully parsed a valid event (parsing failure means there's nothing to save). Hoisting with `let event: AppEvent | undefined` and guarding with `if (event !== undefined)` solves both the scope problem and the parsing-failure case.
+
+---

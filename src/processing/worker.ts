@@ -1,8 +1,10 @@
 import amqp from "amqplib";
 import { config } from "../config.js";
-import { EventSchema } from "../ingestion/event.schema.js";
+import { EventSchema, type AppEvent } from "../ingestion/event.schema.js";
 import { enrich } from "../processors/enrich.js";
 import { classify } from "../processors/classify.js";
+import { connectDb, closeDb } from "../storage/db.js";
+import { saveEvent, saveFailedEvent, ensureIndexes } from "../storage/event.repository.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -23,6 +25,11 @@ const MAX_RETRIES = 3;
 // after in-flight messages are drained to prevent message loss.
 
 export async function startWorker(): Promise<() => Promise<void>> {
+  // Connect to MongoDB before consuming — fail fast if unreachable.
+  // A worker that can't persist events must not ack messages.
+  await connectDb();
+  await ensureIndexes();
+
   const model = await amqp.connect(config.RABBITMQ_URL);
 
   model.on("error", (err: Error) => {
@@ -65,19 +72,21 @@ export async function startWorker(): Promise<() => Promise<void>> {
       const retryCount =
         typeof headers["x-retry-count"] === "number" ? headers["x-retry-count"] : 0;
 
+      // Hoisted so the catch block can call saveFailedEvent(event) when we have
+      // a valid parsed event. If parsing itself throws, event stays undefined.
+      let event: AppEvent | undefined;
+
       try {
         // TODO: replace JSON.parse + EventSchema.parse with EventSchema.safeParse().
         // If parsing fails, should we retry (schema bug?) or dead-letter immediately
         // (malformed producer)? Think about which failure mode this represents.
         const raw: unknown = JSON.parse(msg.content.toString());
-        const event = EventSchema.parse(raw);
+        event = EventSchema.parse(raw);
 
         const enriched = enrich(event, receivedAt);
         const classified = classify(event);
 
-        // TODO (Step 3 — Storage Plane): call saveEvent() here.
-        // const stored = await saveEvent({ raw: event, status: "processed", processed: { ...enriched, ...classified } });
-        // For now, log so we can verify the pipeline is flowing end-to-end.
+        await saveEvent(event, { ...enriched, ...classified });
         console.log(
           `[worker] processed ${event.type} event ${event.id}`,
           { classification: classified.classification, tags: classified.tags },
@@ -105,6 +114,13 @@ export async function startWorker(): Promise<() => Promise<void>> {
           // Exhausted retries — nack without requeue → DLX routes to events.dead.
           // At-least-once delivery guarantee is preserved: we never silently drop.
           console.error(`[worker] dead-lettering message ${msg.properties.messageId ?? "(no id)"} after ${MAX_RETRIES} retries`);
+          // Best-effort: record the failed event in MongoDB for observability.
+          // Wrapped in .catch() so a MongoDB failure never blocks the nack.
+          if (event !== undefined) {
+            await saveFailedEvent(event).catch((saveErr: unknown) => {
+              console.error("[worker] could not record failed event in MongoDB:", saveErr);
+            });
+          }
           ch.nack(msg, false, false);
         }
       }
@@ -114,14 +130,24 @@ export async function startWorker(): Promise<() => Promise<void>> {
 
   console.log(`[worker] consuming from "${config.QUEUE_NAME}" (tag: ${consumerTag})`);
 
-  // ── Shutdown function ────────────────────────────────────────────────────────
+  // ── Shutdown function ──────────────────────────────────────────────────────
   // Graceful shutdown order (from CLAUDE.md):
   //   cancel consumer → finish in-flight message → close channel → close connection
   // ch.cancel() stops new deliveries but lets the current handler finish.
   return async () => {
-    await ch.cancel(consumerTag);
+    await ch.cancel(consumerTag);  // stop new deliveries; in-flight handler finishes
+    await closeDb();               // close MongoDB before AMQP (per graceful shutdown order)
     await ch.close();
     await model.close();
     console.log("[worker] shut down cleanly");
   };
 }
+
+// ── Entrypoint ─────────────────────────────────────────────────────────────────
+// startWorker() returns a shutdown function. Wire it to process signals so
+// `docker stop` / a process manager's SIGTERM triggers a clean drain.
+
+const shutdown = await startWorker();
+
+process.on("SIGTERM", () => void shutdown());
+process.on("SIGINT", () => void shutdown());
