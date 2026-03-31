@@ -6,6 +6,7 @@ import type { AppEvent } from "../ingestion/event.schema.js";
 // enrichedAt: when enrichment completed (captures processing latency)
 
 export interface EnrichedMeta {
+  processingId: string;
   receivedAt: Date;
   enrichedAt: Date;
 }
@@ -16,6 +17,7 @@ export interface EnrichedMeta {
 
 export function enrich(_event: AppEvent, receivedAt: Date = new Date()): EnrichedMeta {
   return {
+    processingId: crypto.randomUUID(),
     receivedAt,
     enrichedAt: new Date(),
   };

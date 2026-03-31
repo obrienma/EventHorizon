@@ -23,6 +23,10 @@ describe("enrich", () => {
     expect(result.enrichedAt.getTime()).toBeGreaterThanOrEqual(receivedAt.getTime());
   });
 
+  it("returns processingId", () => {
+    expect(enrich(baseEvent).processingId).toBeTypeOf("string");
+  });
+
   it("defaults receivedAt to now when not provided", () => {
     const before = new Date();
     const result = enrich(baseEvent);
