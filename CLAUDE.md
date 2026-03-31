@@ -156,6 +156,7 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 
 ## Claude Code Workflow Notes
 
+- **Answer questions directly.** When the user asks a question, answer it inline — do NOT delegate to a sub-agent, cloud agent, or any external tool just to answer a question.
 - **Work one step at a time** and pause for confirmation before moving to the next build step.
 - **Commit after each logical step** — the user commits manually; don't push.
 - **Don't add features beyond what's asked.** No extra error handling, no extra abstractions, no unrequested refactors.
