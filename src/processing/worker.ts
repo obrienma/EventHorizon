@@ -5,6 +5,7 @@ import { enrich } from "../processors/enrich.js";
 import { classify } from "../processors/classify.js";
 import { connectDb, closeDb } from "../storage/db.js";
 import { saveEvent, saveFailedEvent, ensureIndexes } from "../storage/event.repository.js";
+import { declareTopology } from "./queue.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -41,6 +42,13 @@ export async function startWorker(): Promise<() => Promise<void>> {
   ch.on("error", (err: Error) => {
     console.error("[worker] channel error:", err.message);
   });
+
+  // Declare the full RabbitMQ topology before consuming.
+  // Anti-Pattern Avoided: Startup-order coupling
+  // Without this, the worker crashes with ECONNRESET / NOT_FOUND if it starts
+  // before the server (which normally calls connectQueue → declareTopology).
+  // assertExchange/assertQueue are idempotent, so declaring here is always safe.
+  await declareTopology(ch);
 
   // Anti-Pattern Avoided: Unbounded Consumption
   // Without prefetch, the broker pushes ALL queued messages to the first
