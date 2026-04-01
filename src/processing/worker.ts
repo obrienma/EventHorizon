@@ -146,6 +146,20 @@ export async function startWorker(): Promise<() => Promise<void>> {
 // ── Entrypoint ─────────────────────────────────────────────────────────────────
 // startWorker() returns a shutdown function. Wire it to process signals so
 // `docker stop` / a process manager's SIGTERM triggers a clean drain.
+//
+// Register process-level error guards BEFORE the first await so that any
+// startup failure (e.g. RabbitMQ ECONNRESET, MongoDB unreachable) is logged
+// cleanly instead of crashing with an unhandled exception/rejection.
+
+process.on("uncaughtException", (err) => {
+  console.error("[worker] uncaughtException:", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[worker] unhandledRejection:", reason);
+  process.exit(1);
+});
 
 const shutdown = await startWorker();
 
