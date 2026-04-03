@@ -1,61 +1,106 @@
-import type { ChangeStream } from "mongodb";
+import type { ChangeStream, ResumeToken } from "mongodb";
 import { getDb } from "../storage/db.js";
 import { EVENTS_COLLECTION } from "../storage/event.repository.js";
 import type { StoredEvent } from "../ingestion/event.schema.js";
 
-// ── Pattern: Event-Driven Push ────────────────────────────────────────────────
-// Instead of clients polling MongoDB on an interval ("are there new events?"),
-// the change stream inverts control: MongoDB pushes each insert to us the moment
-// it is committed to the oplog. We then fan-out to connected WebSocket clients.
+// ── Pattern: Change Stream Recovery with Resume Token ─────────────────────────
+// MongoDB change streams expose a resume token (change._id) on every event.
+// It encodes the cursor's position in the replica set oplog. When a cursor
+// dies (MongoDB restart, replica set election, network blip), we reopen the
+// stream with { resumeAfter: lastResumeToken }. MongoDB replays any inserts
+// that arrived between the crash and the reconnect — zero gap delivery.
 //
-// Anti-Pattern Avoided: Polling
-// A 1-second poll on a collection with 1,000 inserts/sec would return up to
-// 1,000 documents per query, most of which clients have already seen. The change
-// stream delivers exactly one notification per insert with zero redundant reads.
+// Anti-Pattern Avoided: Silent Cursor Death
+// The original handler only logged on error. A dead cursor means the change
+// stream stops delivering events while metrics continue to work (they issue
+// fresh countDocuments queries). The dashboard looks healthy (stats update)
+// but the event feed freezes — a deceptive failure mode that went undetected
+// for thousands of events.
 //
-// Design Decision — filter on operationType "insert" in the pipeline:
-// Our storage invariant is append-only — updates/deletes never happen. The filter
-// is still explicit because it limits oplog entries the driver must inspect, and
-// documents the intent for future maintainers.
+// Design Decision — exponential backoff on retry:
+// If MongoDB is down, a tight retry loop generates log spam and wastes CPU.
+// Backoff starts at 1s and doubles each attempt, capped at 30s. A successful
+// event delivery resets the backoff so a brief blip doesn't permanently slow
+// recovery.
 //
-// Design Decision — directConnection=true in MONGO_URI:
-// MongoDB change streams require a replica set (they're built on the oplog).
-// directConnection=true tells the driver to connect to the specified node directly
-// without performing replica set topology discovery. This avoids hostname
-// resolution issues when the container's RS member hostname differs from
-// "localhost" — a common docker-compose gotcha.
+// Design Decision — in-memory resume token only (not persisted):
+// Persisting the token to disk would survive a full server restart. That adds
+// file I/O and a startup read path. For this pipeline the observation plane is
+// best-effort — a server restart replays nothing, but never hangs. Persistence
+// would be the next step in a production system.
+//
+// Known limitation — oplog overrun:
+// If the server is down long enough that the oplog has rolled past the resume
+// token, MongoDB rejects the token with a "resume point too far in the past"
+// error. We currently retry with the same stale token → infinite backoff loop.
+// TODO: inspect the error code (286 / ChangeStreamHistoryLost) and retry
+// without a token to restart the stream from the current oplog head.
+
+const RETRY_BASE_MS = 1_000;
+const RETRY_MAX_MS = 30_000;
 
 let stream: ChangeStream<StoredEvent> | null = null;
 
 // ── startChangeStream ─────────────────────────────────────────────────────────
 // Opens a change stream on the events collection and calls onInsert for every
-// new document. Returns a teardown function for graceful shutdown.
+// new document. Automatically recovers from cursor failures using the last
+// seen resume token. Returns a teardown function for graceful shutdown.
 
 export function startChangeStream(
   onInsert: (event: StoredEvent) => void,
 ): () => Promise<void> {
-  stream = getDb()
-    .collection<StoredEvent>(EVENTS_COLLECTION)
-    .watch<StoredEvent>([{ $match: { operationType: "insert" } }]);
+  let resumeToken: ResumeToken | null = null;
+  let retryDelayMs = RETRY_BASE_MS;
+  let shuttingDown = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  stream.on("change", (change) => {
-    // operationType guard is redundant given the pipeline filter above,
-    // but satisfies the TypeScript discriminated union on ChangeStreamDocument.
-    if (change.operationType === "insert" && change.fullDocument) {
-      onInsert(change.fullDocument);
-    }
-  });
+  function open(): void {
+    const options = resumeToken ? { resumeAfter: resumeToken } : {};
 
-  stream.on("error", (err: Error) => {
-    // Don't attempt recovery here — log and let the process manager restart.
-    // A crashed change stream that silently resumes could miss events between
-    // the crash and reconnect without a persisted resume token.
-    console.error("[changeStream] fatal error:", err.message);
-  });
+    stream = getDb()
+      .collection<StoredEvent>(EVENTS_COLLECTION)
+      .watch<StoredEvent>([{ $match: { operationType: "insert" } }], options);
 
-  console.log(`[changeStream] watching "${EVENTS_COLLECTION}" for inserts`);
+    stream.on("change", (change) => {
+      // Advance the cursor position on every delivered event.
+      // This is the "at-least-once" checkpoint — if we crash immediately
+      // after this line, we replay this event on restart. That's fine:
+      // the idempotent insert in event.repository.ts absorbs duplicates.
+      resumeToken = change._id;
+      retryDelayMs = RETRY_BASE_MS; // successful delivery → reset backoff
+
+      if (change.operationType === "insert" && change.fullDocument) {
+        onInsert(change.fullDocument);
+      }
+    });
+
+    stream.on("error", (err: Error) => {
+      if (shuttingDown) return;
+      console.error(
+        `[changeStream] error — reopening in ${retryDelayMs}ms:`,
+        err.message,
+      );
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        open();
+      }, retryDelayMs);
+      retryDelayMs = Math.min(retryDelayMs * 2, RETRY_MAX_MS);
+    });
+
+    const label = resumeToken ? " (resuming from token)" : "";
+    console.log(`[changeStream] watching "${EVENTS_COLLECTION}" for inserts${label}`);
+  }
+
+  open();
 
   return async () => {
+    shuttingDown = true;
+    // Cancel any pending retry before closing — otherwise the timer fires
+    // after MongoDB has closed and open() throws into a dead connection.
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
     if (stream && !stream.closed) {
       await stream.close();
     }

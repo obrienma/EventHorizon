@@ -143,6 +143,7 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 6. ~~`src/seed/producer.ts`~~ ✓
 7. ~~`src/dashboard/index.html`~~ ✓
 8. Tests colocated per layer (Fastify inject + vi.mock → real mongodb-memory-server at bottom)
+9. ~~`src/observation/changeStream.ts` — resume token recovery + exponential backoff~~ ✓
 
 **Tests written so far:**
 - `src/processors/enrich.test.ts` ✓

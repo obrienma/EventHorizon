@@ -711,3 +711,85 @@ const res  = await fetch(url, { headers: { Authorization: `Basic ${auth}` } });
 **A:** `curl` predates the Fetch spec and happily accepts credentials in URLs. Node's native `fetch` (and browsers) implement the Fetch spec which bans them for security. Same URL, different client, different behaviour — always test HTTP calls with the actual client your code uses.
 
 ---
+
+## Phase 9 — Change Stream Resume Token Recovery (2026-04-01)
+
+---
+
+### Pattern: Change Stream Resume with Resume Token
+
+**What it is:**
+MongoDB change streams expose a `_id` field (the *resume token*) on every delivered event. The token encodes the cursor's exact position in the replica set oplog. When you reopen a stream with `{ resumeAfter: lastToken }`, MongoDB replays any events that occurred while the cursor was dead — zero-gap delivery.
+
+**Why it matters:**
+Without recovery, a cursor failure (MongoDB restart, network blip, replica set election) silently kills the observation plane. The metrics interval still works (it issues fresh `countDocuments` queries on each tick), so the dashboard *appears* healthy — stats update, connection dot is green — but the event feed freezes. 19,000+ events can process invisibly while the developer thinks the dashboard is broken for a different reason.
+
+**The fix in `changeStream.ts`:**
+1. Store `resumeToken` in a closure variable, updated on every `change` event.
+2. On `error`: schedule `open()` with exponential backoff, passing `{ resumeAfter: resumeToken }`.
+3. On teardown: set `shuttingDown = true` and cancel any pending retry timer *before* closing the stream.
+
+**Q:** What is a MongoDB change stream resume token?
+**A:** The `_id` field on every change stream event. It encodes the cursor's position in the replica set oplog. Pass it as `{ resumeAfter: token }` when reopening the stream to replay any events you missed since the cursor died.
+
+**Q:** Why does `countDocuments` survive a MongoDB restart but a change stream doesn't?
+**A:** `countDocuments` creates a fresh connection and query on each call — the driver handles reconnection transparently. A change stream is a long-lived cursor pinned to an oplog position. When the cursor is invalidated, you must explicitly reopen it. There is no automatic reconnection for cursors.
+
+---
+
+### Anti-Pattern Avoided: Silent Cursor Death
+
+**The failure mode:**
+`stream.on("error")` logs the error but doesn't restart. The cursor is dead. The server keeps running. Stats broadcast every 5s (they use regular queries). The dashboard connection dot stays green. The event feed is frozen. There's no alarm, no crash — just one logged error that scrolls off the screen.
+
+**Why this is deceptive:**
+The observation plane has two sub-paths: cursor-based (change stream → event broadcast) and query-based (countDocuments → stats broadcast). A failure in one sub-path doesn't affect the other. From outside the server, you only see the healthy sub-path. This is a class of partial failure that monitoring must be designed to detect explicitly.
+
+**Q:** The server is running, ping/pong is working, stats are updating — but no events appear in the feed. What's the most likely cause?
+**A:** The change stream cursor died and was never restarted. Stats use `countDocuments` which reconnects automatically; the change stream cursor does not. Check server logs for `[changeStream] error` or `[changeStream] fatal error`. Restarting the server reopens the cursor.
+
+---
+
+### Design Decision: In-Memory Resume Token (not persisted)
+
+**Decision:** Store the resume token only in memory, not on disk.
+
+**Why:** Persisting to disk (file, Redis, etc.) means a full server restart can resume from the exact pre-restart position — no events missed across restarts. But it adds file I/O, a startup read path, and failure modes around stale/corrupt token files.
+
+**Trade-off accepted:** A server restart replays nothing (new stream starts from the current oplog head). For this pipeline, the observation plane is best-effort — missing events during a restart is acceptable. In a production system with strict delivery guarantees, you'd persist the token.
+
+**Q:** Your change stream recovery uses an in-memory resume token. What events does it protect against, and what does it not protect against?
+**A:** It protects against transient cursor failures during a running server — MongoDB restarts, network blips, RS elections. It does not protect against a full server restart (the token is lost with the process). To survive server restarts, persist the token to disk or a key-value store and load it at startup.
+
+---
+
+### Challenge: Exponential Backoff + Shutdown Race
+
+**The problem:**
+When the cursor errors, we schedule `open()` via `setTimeout`. If the server shuts down during that delay window, the timer fires after MongoDB has already closed — `open()` calls `getDb()` on a dead connection and throws.
+
+**The fix:**
+Track the timer reference (`retryTimer`). In the teardown function:
+1. Set `shuttingDown = true` first (prevents new timers from being scheduled in the error handler).
+2. `clearTimeout(retryTimer)` if it's pending.
+3. Then close the stream.
+
+Order matters: setting `shuttingDown` before `clearTimeout` prevents a race where the error handler fires between the `clearTimeout` call and the stream close, scheduling a new timer.
+
+**Q:** You add a retry timer with `setTimeout`. The server shuts down while the timer is pending. What happens and how do you fix it?
+**A:** The timer fires after MongoDB closes. `open()` calls `getDb()` on a dead connection. Fix: store the timer reference, set a `shuttingDown` flag before teardown, `clearTimeout` the pending timer, then close the stream. The flag prevents the error handler from scheduling new timers if the stream closes during shutdown.
+
+---
+
+### Checkpoint: Delivery Guarantee of the Observation Plane
+
+**Q:** The resume token is updated *before* calling `onInsert`. If the server crashes between those two lines, what delivery guarantee applies to WebSocket broadcasts — and why is that acceptable?
+
+**A:** At-most-once. The token has already advanced past the event, so `resumeAfter: lastToken` on restart skips it. That event is never broadcast. It's acceptable because the observation plane is a live-view overlay, not the source of truth. The event is already durably stored in MongoDB — written by the worker, ack'd, append-only. A missed broadcast means one event doesn't appear in the feed for that window. No data is lost.
+
+**Why not flip the order (token after `onInsert`) for at-least-once?**
+At-least-once would replay and re-broadcast the event on restart. But the dashboard has no deduplication — the client would render it twice in the feed. For a live event stream, a silent gap is better UX than a visible duplicate.
+
+**The deeper principle:** delivery guarantees should match the plane's contract. The storage plane promises at-least-once (RabbitMQ ack-after-write + idempotent insert absorbs replays). The observation plane promises best-effort push to currently-connected clients. Applying at-least-once to a layer where duplicates are visible and unhandled is the wrong guarantee for the wrong layer.
+
+---

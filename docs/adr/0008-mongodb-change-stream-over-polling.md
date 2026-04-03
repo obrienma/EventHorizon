@@ -35,5 +35,5 @@ The implementation also demonstrates Node.js async iterables and the `for await.
 - Change streams require MongoDB to be running as a replica set (even a single-node `rs0`). The Docker Compose configuration handles this; it is not default `mongod` behaviour.
 - Automated testing for change stream behaviour is **not implemented** — it requires a real replica set, which `mongodb-memory-server` does not support by default. This is verified manually.
 - If MongoDB is unavailable, the change stream cursor throws and must be caught in the `changeStream.ts` error handler — the observation plane fails gracefully without crashing the server.
-- A `resumeToken` can be stored to allow the change stream to resume after a restart without replaying all events. This is not yet implemented — a good future extension.
+- Resume token recovery is implemented in `changeStream.ts` — see ADR 0011.
 - Confidence: **High** for the pattern. The replica set requirement adds ops complexity that is acceptable for this project.
