@@ -11,6 +11,21 @@ import { startMetrics, recordInsert } from "./observation/metrics.js";
 
 export const app = Fastify({ logger: true });
 
+// ── Process-level error guards ────────────────────────────────────────────────
+// Must be registered BEFORE any top-level await so that startup failures
+// (e.g. RabbitMQ ECONNRESET, MongoDB unreachable) are caught and logged
+// cleanly rather than crashing with a bare uncaught exception.
+
+process.on("uncaughtException", (err) => {
+  app.log.error(err, "uncaughtException");
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  app.log.error(reason, "unhandledRejection");
+  process.exit(1);
+});
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 void app.register(eventRoutes);
 await registerWsServer(app);
@@ -60,16 +75,6 @@ async function shutdown(signal: string): Promise<void> {
 
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
-
-process.on("uncaughtException", (err) => {
-  app.log.error(err, "uncaughtException");
-  process.exit(1);
-});
-
-process.on("unhandledRejection", (reason) => {
-  app.log.error(reason, "unhandledRejection");
-  process.exit(1);
-});
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
