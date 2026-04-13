@@ -144,6 +144,21 @@ export async function startWorker(): Promise<() => Promise<void>> {
 }
 
 // ── Entrypoint ─────────────────────────────────────────────────────────────────
+// Register process-level error handlers BEFORE any await so they are in place
+// even if startWorker() itself rejects (e.g. ECONNRESET during AMQP handshake).
+// Without these, an unhandled rejection from the top-level await crashes the
+// process with no useful log output.
+
+process.on("uncaughtException", (err) => {
+  console.error("[worker] uncaughtException:", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[worker] unhandledRejection:", reason);
+  process.exit(1);
+});
+
 // startWorker() returns a shutdown function. Wire it to process signals so
 // `docker stop` / a process manager's SIGTERM triggers a clean drain.
 
