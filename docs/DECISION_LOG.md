@@ -104,3 +104,15 @@ BullMQ was the original plan — it has a great TS API and removes ops complexit
 **Decision:** `dashboard/index.html` — one file, inline JS, no build step, no framework.
 
 **Why:** The dashboard is not the project. A React/Vue app would shift focus away from the backend plumbing. Vanilla WebSocket + DOM is ~150 lines and keeps the backend as the primary learning surface. The constraint also forces you to write a clean WebSocket message protocol (since you can't hide complexity behind a state management library).
+
+---
+
+## 012 — Zod over Valibot
+
+**Decision:** Zod for all schema validation (HTTP payloads, environment variables, type inference).
+
+**Why:** Valibot's primary advantage is a smaller bundle size — irrelevant here because this is a server-side Node.js application. Nothing is shipped to a browser, so download weight does not factor into the decision. Zod is the de-facto standard in the TypeScript/Node.js ecosystem with broader adoption, better ecosystem integrations, and far more community examples. The `z.infer<>` convention for deriving types from schemas is idiomatic and widely understood.
+
+**Tradeoff:** Zod is not tree-shakeable in the same way as Valibot. At server scale this has no practical impact.
+
+**See also:** [ADR 0012](adr/0012-zod-over-valibot.md)
