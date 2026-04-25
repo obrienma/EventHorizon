@@ -793,3 +793,50 @@ At-least-once would replay and re-broadcast the event on restart. But the dashbo
 **The deeper principle:** delivery guarantees should match the plane's contract. The storage plane promises at-least-once (RabbitMQ ack-after-write + idempotent insert absorbs replays). The observation plane promises best-effort push to currently-connected clients. Applying at-least-once to a layer where duplicates are visible and unhandled is the wrong guarantee for the wrong layer.
 
 ---
+
+## Phase 8 — Testability Refactor: App Factory (2026-04-25)
+
+Files changed: `src/server.ts` split into `src/app.ts` + `src/server.ts`, `src/ingestion/event.routes.test.ts`
+
+---
+
+### Anti-Pattern Avoided: Import = Side Effect
+
+**Where it appeared:** `src/server.ts` (original, before split)
+
+**What the anti-pattern is:**
+A single module that both exports a value (`app`) *and* executes startup I/O when imported — calling `app.listen()`, `connectDb()`, `connectQueue()`, and `startMetrics()` at module top-level.
+
+**The failure mode it caused:**
+The routes test imported `server.ts` to get the `app` instance for `inject()` calls. Importing triggered `app.listen()`, which tried to bind port 3000. When the dev server was already running on that port, the error handler called `process.exit(1)`, killing the entire Vitest worker process — crashing all tests in that file before any test ran.
+
+**Why port 0 would not have fixed it:**
+Port 0 (OS-assigned random port) only sidesteps the port collision. It does not prevent `connectDb()`, `connectQueue()`, and `startMetrics()` from firing at import time. Those calls either fail (infrastructure not running in CI) or add real startup latency to every test. The root cause — I/O at import time — remains.
+
+---
+
+### Pattern: App Factory
+
+**Where it appears:** `src/app.ts` + `src/server.ts`
+
+**What it is:**
+Split a server module into two distinct responsibilities:
+- **`app.ts`** — pure construction: create the Fastify instance, register plugins and routes. No network I/O. Safe to import in any test or context.
+- **`server.ts`** — entry point: import `app`, run all startup I/O (DB, queue, change stream, metrics), bind the port, register signal handlers. Never imported by tests.
+
+**Why this is the right boundary:**
+Tests using Fastify's `inject()` don't need a real socket. They call the route handler directly through the framework's injection layer. The test only needs the configured `app` object — not a listening server, not a database connection, not a running metrics interval.
+
+**Design Decision — why not keep them in one file with a `start()` function:**
+A `start()` function still requires the test to explicitly *not* call it. That's fragile — a future dev might call it, or a test setup might. The split makes the contract structural: `app.ts` *cannot* start a server because it has no `listen()` call. The test importing `app.ts` gets a pure value with no affordance for side effects.
+
+**Q:** What is the App Factory pattern and why does it improve testability?
+**A:** Split server setup into two files: one that constructs and exports the framework instance (no I/O), and one entry point that imports it, connects to infrastructure, and binds a port. Tests import only the construction module — they get a fully configured app with zero infrastructure dependency. Fastify's `inject()` can exercise every route handler without a real socket.
+
+**Q:** Why is "port 0" an insufficient fix when a server module does I/O at import time?
+**A:** Port 0 avoids the bind collision but doesn't prevent `connectDb()`, `connectQueue()`, or `startMetrics()` from running when the module is imported. The root cause is I/O at import time, not a specific port number. The correct fix is the App Factory split — move all I/O to the entry point module so it never runs during test imports.
+
+**Q:** Name the anti-pattern: a module that exports a value but also runs network I/O when imported.
+**A:** Import = Side Effect. It violates the principle that importing a module should be a pure, declarative operation. Side effects at import time make a module impossible to use safely in tests, CLIs, or any context that doesn't want the full runtime started.
+
+---

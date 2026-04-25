@@ -3,16 +3,16 @@ import { z } from "zod";
 
 const ConfigSchema = z.object({
   // Server
-  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
   HOST: z.string().default("0.0.0.0"),
 
   // MongoDB
-  MONGO_URI: z.string().url(),
+  MONGO_URI: z.string().min(1), // Note: don't validate as url: e.g. "mongodb://localhost:27017"
   MONGO_DB_NAME: z.string().min(1),
 
   // RabbitMQ
   RABBITMQ_URL: z.string().min(1),
-  RABBITMQ_MANAGEMENT_URL: z.string().url().default("http://guest:guest@localhost:15672"),
+  RABBITMQ_MANAGEMENT_URL: z.url().default("http://guest:guest@localhost:15672"),
 
   // Queue / Exchange names
   EXCHANGE_NAME: z.string().min(1),
@@ -25,16 +25,15 @@ const ConfigSchema = z.object({
   QUEUE_DEPTH_CRITICAL: z.coerce.number().int().min(1).default(200),
 
   // Observability
-  STATS_PUSH_INTERVAL_MS: z.coerce.number().int().min(100).default(5000),
-  METRICS_RATE_WINDOW_MS: z.coerce.number().int().min(100).default(10000),
-  EVENT_DISTRIBUTION_POLL_MS: z.coerce.number().int().min(100).default(10000),
+  STATS_PUSH_INTERVAL_MS: z.coerce.number().int().min(100).default(5_000),
+  METRICS_RATE_WINDOW_MS: z.coerce.number().int().min(100).default(10_000),
+  EVENT_DISTRIBUTION_POLL_MS: z.coerce.number().int().min(100).default(10_000),
 });
 
 const result = ConfigSchema.safeParse(process.env);
-
 if (!result.success) {
   console.error("❌ Invalid environment configuration:");
-  for (const issue of result.error.issues){
+  for (const issue of result.error.issues) {
     console.error(` ${issue.path.join(".")}: ${issue.message}`);
   }
   process.exit(1);

@@ -1,24 +1,11 @@
-import Fastify from "fastify";
-import { readFileSync } from "fs";
+import { app } from "./app.js";
 import { config } from "./config.js";
-import { eventRoutes } from "./ingestion/event.routes.js";
 import { connectQueue, closeQueue } from "./processing/queue.js";
 import { connectDb, closeDb } from "./storage/db.js";
 import { ensureIndexes } from "./storage/event.repository.js";
 import { startChangeStream } from "./observation/changeStream.js";
-import { registerWsServer, broadcast } from "./observation/wsServer.js";
+import { broadcast } from "./observation/wsServer.js";
 import { startMetrics, recordInsert } from "./observation/metrics.js";
-
-export const app = Fastify({ logger: true });
-
-// ── Routes ────────────────────────────────────────────────────────────────────
-void app.register(eventRoutes);
-await registerWsServer(app);
-
-const dashboardHtml = readFileSync(new URL("./dashboard/index.html", import.meta.url));
-const faviconIco   = readFileSync(new URL("./dashboard/favicon.ico", import.meta.url));
-app.get("/dashboard", (_req, reply) => reply.type("text/html").send(dashboardHtml));
-app.get("/favicon.ico", (_req, reply) => reply.type("image/x-icon").send(faviconIco));
 
 // ── Startup ───────────────────────────────────────────────────────────────────
 await connectDb();
@@ -34,8 +21,6 @@ const stopMetrics = startMetrics(broadcast);
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 // Order matters — see CLAUDE.md. Fastify drains in-flight requests first.
-// Each plane (AMQP, MongoDB) will add its own teardown here as it is wired in.
-
 let shuttingDown = false;
 
 async function shutdown(signal: string): Promise<void> {
@@ -49,7 +34,7 @@ async function shutdown(signal: string): Promise<void> {
     stopMetrics();                   // step 2: stop stats broadcast interval
     await closeChangeStream();       // step 3: stop watching oplog
     await closeDb();                 // step 4: close MongoDB
-    await closeQueue();              // step 4: close AMQP channel + connection
+    await closeQueue();              // step 5: close AMQP channel + connection
     app.log.info("shutdown complete");
     process.exit(0);
   } catch (err) {
@@ -72,7 +57,6 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-
 app.listen({ port: config.PORT, host: config.HOST }, (err) => {
   if (err) {
     app.log.error(err, "failed to start server");

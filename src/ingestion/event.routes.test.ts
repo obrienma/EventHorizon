@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { app } from "../server.js";
+import { app } from "../app.js";
 
 vi.mock("../processing/queue.js", () => ({
   connectQueue: vi.fn().mockResolvedValue(undefined),
