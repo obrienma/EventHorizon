@@ -14,6 +14,37 @@ let channel: amqp.Channel | null = null;
 const DLX_EXCHANGE = "events.dlx";
 const DLX_QUEUE = config.DEAD_LETTER_QUEUE; // events.dead
 
+// ── declareTopology ───────────────────────────────────────────────────────────
+// Idempotent: assertExchange / assertQueue are no-ops if already declared with
+// the same args. Changing args on a live queue requires deleting it first
+// (406 PRECONDITION_FAILED).
+//
+// Exported so worker.ts can call it on its own channel — both the publisher
+// (server) and consumer (worker) need the topology to exist before use.
+// Declaring it in both places means startup order no longer matters.
+
+export async function declareTopology(ch: amqp.Channel): Promise<void> {
+  // 1. Dead-letter fanout — events.dlx → events.dead
+  await ch.assertExchange(DLX_EXCHANGE, "fanout", { durable: true });
+  await ch.assertQueue(DLX_QUEUE, { durable: true });
+  await ch.bindQueue(DLX_QUEUE, DLX_EXCHANGE, "");
+
+  // 2. Work exchange — topic, routes events.pipeline / events.sensor / events.app
+  await ch.assertExchange(config.EXCHANGE_NAME, "topic", { durable: true });
+
+  // 3. Work queue — durable, DLX-backed, 30 s TTL safety net
+  await ch.assertQueue(config.QUEUE_NAME, {
+    durable: true,
+    arguments: {
+      "x-dead-letter-exchange": DLX_EXCHANGE,
+      "x-message-ttl": 30_000,
+    },
+  });
+
+  // 4. Bind work queue to exchange — catch all events.* routing keys
+  await ch.bindQueue(config.QUEUE_NAME, config.EXCHANGE_NAME, "events.#");
+}
+
 // ── connectQueue ──────────────────────────────────────────────────────────────
 // Design Decision: no top-level await / no side effects on import.
 // This function is called explicitly by server.ts at startup. Tests that import
@@ -34,29 +65,7 @@ export async function connectQueue(): Promise<void> {
     console.error("[queue] channel error:", err.message);
   });
 
-  // ── Topology declaration (idempotent) ───────────────────────────────────────
-  // assertExchange / assertQueue are no-ops if already declared with same args.
-  // Changing args on a live queue requires deleting it first (406 PRECONDITION_FAILED).
-
-  // 1. Dead-letter fanout — events.dlx → events.dead
-  await ch.assertExchange(DLX_EXCHANGE, "fanout", { durable: true });
-  await ch.assertQueue(DLX_QUEUE, { durable: true });
-  await ch.bindQueue(DLX_QUEUE, DLX_EXCHANGE, "");
-
-  // 2. Work exchange — topic, routes events.pipeline / events.sensor / events.app
-  await ch.assertExchange(config.EXCHANGE_NAME, "topic", { durable: true });
-
-  // 3. Work queue — durable, DLX-backed, 30 s TTL safety net
-  await ch.assertQueue(config.QUEUE_NAME, {
-    durable: true,
-    arguments: {
-      "x-dead-letter-exchange": DLX_EXCHANGE,
-      "x-message-ttl": 30_000,
-    },
-  });
-
-  // 4. Bind work queue to exchange — catch all events.* routing keys
-  await ch.bindQueue(config.QUEUE_NAME, config.EXCHANGE_NAME, "events.#");
+  await declareTopology(ch);
 
   channelModel = model;
   channel = ch;

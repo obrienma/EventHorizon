@@ -22,6 +22,9 @@ const { mockCh, getHandler } = vi.hoisted(() => {
     close: vi.fn().mockResolvedValue(undefined),
     cancel: vi.fn().mockResolvedValue(undefined),
     on: vi.fn(),
+    assertExchange: vi.fn().mockResolvedValue(undefined),
+    assertQueue: vi.fn().mockResolvedValue({ queue: "events.work", messageCount: 0, consumerCount: 0 }),
+    bindQueue: vi.fn().mockResolvedValue(undefined),
   };
 
   return { mockCh, getHandler: () => _handler };
