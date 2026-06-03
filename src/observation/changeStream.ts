@@ -2,13 +2,19 @@ import type { ChangeStream, ResumeToken } from "mongodb";
 import { getDb } from "../storage/db.js";
 import { EVENTS_COLLECTION } from "../storage/event.repository.js";
 import type { StoredEvent } from "../ingestion/event.schema.js";
+import { loadResumeToken, saveResumeToken, clearResumeToken } from "./checkpoint.js";
 
-// ── Pattern: Change Stream Recovery with Resume Token ─────────────────────────
+// ── Pattern: Change Stream Recovery with Durable Checkpoint ──────────────────
 // MongoDB change streams expose a resume token (change._id) on every event.
 // It encodes the cursor's position in the replica set oplog. When a cursor
 // dies (MongoDB restart, replica set election, network blip), we reopen the
 // stream with { resumeAfter: lastResumeToken }. MongoDB replays any inserts
 // that arrived between the crash and the reconnect — zero gap delivery.
+//
+// The resume token is now persisted to MongoDB via checkpoint.ts. On startup
+// we load the last saved token so pod restarts (k3s evictions, rolling deploys)
+// don't lose the cursor position. A null token (first boot, or post-overrun
+// clear) starts the stream at the current oplog head.
 //
 // Anti-Pattern Avoided: Silent Cursor Death
 // The original handler only logged on error. A dead cursor means the change
@@ -23,33 +29,40 @@ import type { StoredEvent } from "../ingestion/event.schema.js";
 // event delivery resets the backoff so a brief blip doesn't permanently slow
 // recovery.
 //
-// Design Decision — in-memory resume token only (not persisted):
-// Persisting the token to disk would survive a full server restart. That adds
-// file I/O and a startup read path. For this pipeline the observation plane is
-// best-effort — a server restart replays nothing, but never hangs. Persistence
-// would be the next step in a production system.
+// Design Decision — fire-and-forget checkpoint writes:
+// saveResumeToken() is not awaited in the "change" handler. A failed write is
+// logged but does not interrupt event delivery or block the handler. Worst
+// case: the token drifts slightly behind on the next pod restart. The event
+// is still delivered to WebSocket clients; the durability guarantee slightly
+// weakens but does not break.
 //
 // Known limitation — oplog overrun:
 // If the server is down long enough that the oplog has rolled past the resume
-// token, MongoDB rejects the token with a "resume point too far in the past"
-// error. We currently retry with the same stale token → infinite backoff loop.
-// TODO: inspect the error code (286 / ChangeStreamHistoryLost) and retry
-// without a token to restart the stream from the current oplog head.
+// token, MongoDB rejects the token with error 286 (ChangeStreamHistoryLost).
+// We detect the code, clear the stale checkpoint, reset backoff, and reopen
+// from the current oplog head — accepting the gap. Without detection this
+// would be an infinite retry loop with a permanently stale token.
 
 const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
+const OPLOG_OVERRUN_CODE = 286;
 
 let stream: ChangeStream<StoredEvent> | null = null;
 
 // ── startChangeStream ─────────────────────────────────────────────────────────
 // Opens a change stream on the events collection and calls onInsert for every
-// new document. Automatically recovers from cursor failures using the last
-// seen resume token. Returns a teardown function for graceful shutdown.
+// new document. Loads the persisted resume token on startup; persists it on
+// every delivered event. Automatically recovers from cursor failures.
+// Returns a teardown function for graceful shutdown.
 
-export function startChangeStream(
+export async function startChangeStream(
   onInsert: (event: StoredEvent) => void,
-): () => Promise<void> {
-  let resumeToken: ResumeToken | null = null;
+): Promise<() => Promise<void>> {
+  let resumeToken: ResumeToken | null = await loadResumeToken();
+  if (resumeToken) {
+    console.log("[changeStream] loaded resume token from checkpoint");
+  }
+
   let retryDelayMs = RETRY_BASE_MS;
   let shuttingDown = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -63,11 +76,13 @@ export function startChangeStream(
 
     stream.on("change", (change) => {
       // Advance the cursor position on every delivered event.
-      // This is the "at-least-once" checkpoint — if we crash immediately
-      // after this line, we replay this event on restart. That's fine:
-      // the idempotent insert in event.repository.ts absorbs duplicates.
       resumeToken = change._id;
-      retryDelayMs = RETRY_BASE_MS; // successful delivery → reset backoff
+      retryDelayMs = RETRY_BASE_MS;
+
+      // Persist the checkpoint — fire-and-forget.
+      saveResumeToken(change._id).catch((err: Error) =>
+        console.error("[changeStream] failed to persist resume token:", err.message),
+      );
 
       if (change.operationType === "insert" && change.fullDocument) {
         onInsert(change.fullDocument);
@@ -76,6 +91,25 @@ export function startChangeStream(
 
     stream.on("error", (err: Error) => {
       if (shuttingDown) return;
+
+      // ── Oplog overrun (ChangeStreamHistoryLost) ───────────────────────────
+      // The oplog has rolled past our resume token. Clear the stale checkpoint
+      // and restart from the current oplog head. Events inserted during the
+      // gap are not replayed — this is the known and accepted failure mode.
+      const code = (err as { code?: number }).code;
+      if (code === OPLOG_OVERRUN_CODE) {
+        console.warn(
+          "[changeStream] oplog overrun (ChangeStreamHistoryLost) — " +
+            "clearing stale checkpoint, restarting from oplog head. " +
+            "Events during the gap will not be replayed to clients.",
+        );
+        resumeToken = null;
+        retryDelayMs = RETRY_BASE_MS;
+        clearResumeToken().catch((e: Error) =>
+          console.error("[changeStream] failed to clear stale checkpoint:", e.message),
+        );
+      }
+
       console.error(
         `[changeStream] error — reopening in ${retryDelayMs}ms:`,
         err.message,

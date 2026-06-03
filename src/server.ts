@@ -12,7 +12,7 @@ await connectDb();
 await ensureIndexes();
 await connectQueue();
 
-const closeChangeStream = startChangeStream((event) => {
+const closeChangeStream = await startChangeStream((event) => {
   recordInsert(event);
   broadcast({ type: "event", data: event });
 });

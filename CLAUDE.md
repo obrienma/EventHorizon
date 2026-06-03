@@ -130,7 +130,7 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 
 ## Current Build Status
 
-**Completed:** project scaffold, tsconfig, docker-compose, .env, vitest config, README, all docs, copilot-instructions.md, CLAUDE.md, `src/config.ts`, `src/ingestion/event.schema.ts`, `src/global.d.ts`, `src/server.ts`, `src/ingestion/event.routes.ts`, `src/processing/queue.ts`, `src/processing/worker.ts`, `src/processors/enrich.ts`, `src/processors/classify.ts`, `src/storage/db.ts`, `src/storage/event.repository.ts`, `src/observation/changeStream.ts`, `src/observation/wsServer.ts`, `src/observation/metrics.ts`.
+**Completed:** project scaffold, tsconfig, docker-compose, .env, vitest config, README, all docs, copilot-instructions.md, CLAUDE.md, `src/config.ts`, `src/ingestion/event.schema.ts`, `src/global.d.ts`, `src/server.ts`, `src/ingestion/event.routes.ts`, `src/processing/queue.ts`, `src/processing/worker.ts`, `src/processors/enrich.ts`, `src/processors/classify.ts`, `src/storage/db.ts`, `src/storage/event.repository.ts`, `src/observation/changeStream.ts`, `src/observation/wsServer.ts`, `src/observation/metrics.ts`, `src/observation/checkpoint.ts`.
 
 **Build order: top-down** (start at the entry point, add each layer as it's called)
 
@@ -144,6 +144,7 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 7. ~~`src/dashboard/index.html`~~ ✓
 8. Tests colocated per layer (Fastify inject + vi.mock → real mongodb-memory-server at bottom)
 9. ~~`src/observation/changeStream.ts` — resume token recovery + exponential backoff~~ ✓
+10. ~~`src/observation/checkpoint.ts` — durable resume token persistence (k3s pod-restart safe)~~ ✓
 
 **Tests written so far:**
 - `src/processors/enrich.test.ts` ✓
