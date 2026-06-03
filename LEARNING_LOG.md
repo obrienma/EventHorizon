@@ -840,3 +840,57 @@ A `start()` function still requires the test to explicitly *not* call it. That's
 **A:** Import = Side Effect. It violates the principle that importing a module should be a pure, declarative operation. Side effects at import time make a module impossible to use safely in tests, CLIs, or any context that doesn't want the full runtime started.
 
 ---
+
+## Phase 10 — Bug Fix: Silent Message Drop Under Flow Control (2026-05-14)
+
+Files changed: `src/processing/worker.ts`, `src/processing/worker.test.ts`
+
+---
+
+### Challenge: `ch.publish()` silent drop — found by code review, not by a test failure
+
+**What happened:**
+Static analysis of `worker.ts:102` revealed that `ch.publish()` was called but its return value was never captured. `ch.ack(msg)` ran unconditionally on the next line. `amqplib`'s `Channel.publish()` is synchronous and returns a `boolean` — `true` if the message was buffered, `false` if the broker's write buffer was full (flow control / backpressure). When it returns `false`, the message was never queued — but the original was acked anyway. The message is gone.
+
+**Why no test caught it:**
+`mockCh.publish` was declared as `vi.fn()`, which returns `undefined` by default. `undefined` is falsy — identical to a `false` return from the real method. Yet the existing tests asserted `mockCh.ack` was called and they passed. This means the tests were accidentally modeling the buggy path (publish returns falsy, ack still fires) and asserting on its (wrong) outcome. The mock had **false fidelity**: it appeared to match the real API but silently described the broken behaviour.
+
+**Root cause:**
+`amqplib` follows the Node.js streams convention: `write()`/`publish()` return `false` when the internal write buffer is full, signalling the caller to pause until the `'drain'` event fires. This convention is synchronous and idiomatic in Node.js streams — but easy to miss because every other call in the worker (`ack`, `nack`, `prefetch`) either returns `void` or a `Promise`. `publish()` is the odd one out.
+
+**The fix (two parts):**
+
+1. `worker.ts` — capture the return value; only `ack` the original if `published === true`. If `false`, emit a warning and leave the message unacked — RabbitMQ redelivers it when the consumer is ready.
+
+2. `worker.test.ts` — change the mock default to `mockReturnValue(true)` (matching real amqplib under normal conditions), then add one explicit test that sets `mockReturnValueOnce(false)` and asserts `ack` is NOT called.
+
+**Why "don't ack" is the right recovery for a `false` return:**
+The alternative is to `nack` without requeue (dead-letter the message), but that would permanently discard a message just because the broker was temporarily under load — an overreaction. Not acking holds the prefetch slot occupied, which is correct: it applies backpressure to this consumer naturally. Under flow control, the consumer *should* slow down. RabbitMQ will redeliver the original once the channel drains.
+
+**Q:** `amqplib`'s `ch.publish()` is called inside an `async` handler. It returns a value but it's not a Promise — what does that return value mean and why does it matter?
+**A:** `publish()` is synchronous and returns `boolean`. `true` means the message was written to the channel's internal buffer. `false` means the buffer is full (broker applying flow control / backpressure). If you ignore a `false` and still ack the original, you silently drop the message. The correct response to `false` is to not ack — let the broker redeliver the original. This follows the Node.js streams write-returns-false convention.
+
+**Q:** Your mock returns `undefined` from `publish()`, the existing tests still pass, but the code has a silent data-loss bug. How?
+**A:** `undefined` is falsy — the mock was accidentally modeling the broken code path (publish fails, ack runs anyway) and the tests asserted on that wrong outcome. This is **false fidelity**: the mock appeared to match the real API but validated the bug rather than catching it. The fix is to set the default return to `true` (matching real amqplib under normal conditions) and add an explicit test for the `false` case.
+
+---
+
+### Anti-Pattern Avoided: Ignoring Write-Buffer Signals (Flow Control Blindness)
+
+**The anti-pattern:**
+Calling `write()`/`publish()`/`send()` in a Node.js streams or AMQP context and discarding the boolean return value. The pattern assumes the write always succeeds, which is true under normal load but false when the receiver applies backpressure.
+
+**Why it's dangerous here specifically:**
+The ignored return is followed immediately by `ch.ack()` — a destructive, non-retryable operation. The message is permanently removed from the broker. Unlike a failed MongoDB write (which throws and is caught), a failed `publish()` is silent: no exception, no log, no rejected promise. The only signal is a `false` return that was never read.
+
+**The broader principle:**
+Any synchronous function that returns a `boolean` in a write path is communicating flow control state. Common examples: `socket.write()`, `stream.write()`, `ws.send()` (bufferedAmount), `channel.publish()`. Discarding these signals is safe only when message loss is acceptable — which in an at-least-once delivery pipeline, it is not.
+
+**Q:** Name the anti-pattern: calling `socket.write()` or `channel.publish()` and discarding the return value.
+**A:** Flow Control Blindness. The `boolean` return is Node.js's standard signal that the write buffer is full — the caller should pause until `'drain'` fires. Ignoring it is safe only when message loss is acceptable. In a delivery-guarantee pipeline (at-least-once), discarding this signal converts the retry path from at-least-once to at-most-once for messages that hit backpressure.
+
+---
+
+### Challenges
+
+The bug was invisible to the existing test suite because the mock's default return value (`undefined`) accidentally modeled the broken code path. No test had ever set `publish` to return `true` and then verified that `ack` fires only in that case. The fix required reasoning about mock fidelity, not just writing a new assertion — the mock default had to change first, or the new test would have passed for the wrong reason.

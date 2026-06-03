@@ -99,17 +99,28 @@ export async function startWorker(): Promise<() => Promise<void>> {
         if (retryCount < MAX_RETRIES) {
           // Republish to the BACK of the queue with an incremented retry count.
           // We ack the original so it doesn't occupy a prefetch slot while waiting.
-          ch.publish(
+          //
+          // ch.publish() is synchronous and returns false when the broker applies
+          // flow control (channel write buffer full). If that happens, do NOT ack
+          // the original — let RabbitMQ redeliver it. The occupied prefetch slot
+          // is intentional: it applies backpressure to this consumer while the
+          // broker is under load.
+          const published = ch.publish(
             config.EXCHANGE_NAME,
             msg.fields.routingKey,
             msg.content,
             {
               persistent: true,
               contentType: msg.properties.contentType ?? "application/json",
+              messageId: msg.properties.messageId as string | undefined,
               headers: { ...headers, "x-retry-count": retryCount + 1 },
             },
           );
-          ch.ack(msg);
+          if (published) {
+            ch.ack(msg);
+          } else {
+            console.warn("[worker] ch.publish() returned false (flow control) — holding ack, broker will redeliver");
+          }
         } else {
           // Exhausted retries — nack without requeue → DLX routes to events.dead.
           // At-least-once delivery guarantee is preserved: we never silently drop.

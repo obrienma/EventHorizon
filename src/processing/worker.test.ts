@@ -18,7 +18,7 @@ const { mockCh, getHandler } = vi.hoisted(() => {
     ),
     ack: vi.fn(),
     nack: vi.fn(),
-    publish: vi.fn(),
+    publish: vi.fn().mockReturnValue(true),
     close: vi.fn().mockResolvedValue(undefined),
     cancel: vi.fn().mockResolvedValue(undefined),
     on: vi.fn(),
@@ -53,7 +53,7 @@ const validEvent = {
   payload: { action: "login" },
 };
 
-function makeMsg(payload: unknown, retryCount = 0): ConsumeMessage {
+function makeMsg(payload: unknown, retryCount = 0, messageId?: string): ConsumeMessage {
   return {
     content: Buffer.from(JSON.stringify(payload)),
     fields: {
@@ -66,6 +66,7 @@ function makeMsg(payload: unknown, retryCount = 0): ConsumeMessage {
     properties: {
       headers: { "x-retry-count": retryCount },
       contentType: "application/json",
+      messageId,
     },
   } as unknown as ConsumeMessage;
 }
@@ -121,11 +122,12 @@ describe("worker message handler", () => {
   it("republishes with incremented x-retry-count on transient error", async () => {
     vi.mocked(saveEvent).mockRejectedValueOnce(new Error("db error"));
 
-    await handle(makeMsg(validEvent, 0));
+    await handle(makeMsg(validEvent, 0, validEvent.id));
 
     expect(mockCh.publish).toHaveBeenCalledOnce();
-    const [, , , opts] = mockCh.publish.mock.calls[0] as [string, string, Buffer, { headers: Record<string, unknown> }];
+    const [, , , opts] = mockCh.publish.mock.calls[0] as [string, string, Buffer, { headers: Record<string, unknown>; messageId?: string }];
     expect(opts.headers["x-retry-count"]).toBe(1);
+    expect(opts.messageId).toBe(validEvent.id);
     expect(mockCh.ack).toHaveBeenCalledOnce();
     expect(mockCh.nack).not.toHaveBeenCalled();
   });
@@ -137,6 +139,17 @@ describe("worker message handler", () => {
 
     const [, , , opts] = mockCh.publish.mock.calls[0] as [string, string, Buffer, { headers: Record<string, unknown> }];
     expect(opts.headers["x-retry-count"]).toBe(3);
+  });
+
+  it("does not ack original when publish returns false (flow control)", async () => {
+    vi.mocked(saveEvent).mockRejectedValueOnce(new Error("db error"));
+    mockCh.publish.mockReturnValueOnce(false);
+
+    await handle(makeMsg(validEvent, 0));
+
+    expect(mockCh.publish).toHaveBeenCalledOnce();
+    expect(mockCh.ack).not.toHaveBeenCalled();
+    expect(mockCh.nack).not.toHaveBeenCalled();
   });
 
   // ── Dead-letter path ─────────────────────────────────────────────────────

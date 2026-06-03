@@ -82,6 +82,7 @@ export function publishEvent(event: AppEvent): void {
   const ok = channel.publish(config.EXCHANGE_NAME, routingKey, body, {
     persistent: true,
     contentType: "application/json",
+    messageId: event.id,
   });
 
   if (!ok) {
