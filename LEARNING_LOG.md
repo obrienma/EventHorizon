@@ -1002,3 +1002,37 @@ Docker containers run as root by default. In Kubernetes/k3s, many cluster securi
 **Stale `dist/` from incremental `tsc`:** `tsc` does not delete previously compiled files that are no longer in the compilation scope. Adding `tsconfig.build.json` to exclude test files only prevented new compilations — old `*.test.js` files from previous runs remained in `dist/`. The fix is `rm -rf dist/` before compilation: `"build": "rm -rf dist/ && tsc -p tsconfig.build.json"`. Without the clean step, the first build after adding the exclude would appear to work but silently include stale test artifacts.
 
 **`dotenv` in production:** `import "dotenv/config"` in `config.ts` is a no-op when no `.env` file exists (dotenv silently ignores missing files). k3s injects env vars from ConfigMap/Secret references before the process starts, so `process.env` is already populated. The Zod validation then runs against the injected values. Tested: running the worker image without any env vars produces the correct Zod error and exits 1 — the config boundary is working correctly.
+
+---
+
+## Phase 13 — Health Check Endpoint (2026-06-03)
+
+Files changed: `src/health.routes.ts` (new), `src/app.ts`, `src/health.routes.test.ts` (new)
+
+---
+
+### Pattern: Dependency-Aware Health Check
+
+**Q:** Why does a health endpoint need to check its dependencies — why not just return 200?
+**A:** A trivial 200 is useless to an orchestrator. k3s liveness probes exist to detect deadlocked or permanently degraded pods so they can be restarted. If `/healthz` always returns 200 even when the MongoDB connection is dead, k3s never restarts the pod and the silent failure persists indefinitely. The probe must touch the actual dependency (`db.command({ ping: 1 })`) to produce a meaningful signal.
+
+**Q:** What is the difference between a liveness probe and a readiness probe in k3s?
+**A:** Liveness: "Is this process alive and not stuck?" Failure triggers a pod restart. Readiness: "Is this pod ready to serve traffic?" Failure removes the pod from the Service's endpoint list (stops routing) without restarting it. Use readiness when startup is slow or when a pod needs to temporarily drain (rolling deploy). Use liveness for deadlock detection. A single `/healthz` serving both is standard for simple services; split them only if you need different restart vs traffic-shedding behaviour.
+
+---
+
+### Anti-Pattern Avoided: Healthcheck Without Dependency Verification
+
+A health route that calls no external dependency is a **vanity probe** — it proves the HTTP server is alive (which Docker/k3s can detect from the TCP connection anyway) but says nothing about whether the app can do useful work. The fix: probe the minimum set of dependencies needed to handle a real request. For the server, that means MongoDB (needed for the change stream and checkpoint reads). For the worker, there is no HTTP server — an exec probe (heartbeat file) or no probe is documented as the alternative.
+
+---
+
+### Decision: Worker Has No HTTP Health Endpoint
+
+The worker process is a pure AMQP consumer — no HTTP server. Adding a minimal HTTP server just for health probing is possible but adds complexity. The pragmatic alternatives: (1) exec probe — worker writes a timestamp to `/tmp/healthy` on each message ack; k3s checks if the file is recent; (2) no probe — rely on process-level restart policies (`restartPolicy: Always`) and the dead-letter queue as the signal for stuck workers. Documented as a TODO in the Deployment manifest.
+
+---
+
+### Challenges
+
+No unexpected obstacles. The existing `event.routes.test.ts` established the exact mock pattern needed (`vi.mock` all module-level dependencies of `app.ts`, import the `app` singleton). Reusing the same pattern for the health route test was straightforward. The only subtlety: the health route calls `getDb().command(...)` so `getDb` needs a per-test return value (`vi.mocked(getDb).mockReturnValue({ command: vi.fn()... })`), unlike the event route tests where `getDb` is mocked but never called.
