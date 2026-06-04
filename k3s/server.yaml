@@ -1,0 +1,83 @@
+# ── Server: HTTP + WebSocket + Change Stream Observer ─────────────────────────
+# Runs src/server.ts (compiled to dist/server.js).
+# Exposes the ingestion REST endpoint, the live dashboard, and the WebSocket
+# feed. The /healthz route is used for both liveness and readiness probes.
+#
+# Scaling note: multiple server replicas each open their own change stream
+# cursor. Each cursor broadcasts to its own set of connected WebSocket clients.
+# Clients connecting to different replicas see the same events (same oplog),
+# but a client that reconnects to a different replica does not resume its
+# previous session. Sticky sessions at the load balancer level are needed if
+# session continuity matters.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: event-horizon-server
+  namespace: event-horizon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: event-horizon-server
+  template:
+    metadata:
+      labels:
+        app: event-horizon-server
+    spec:
+      containers:
+        - name: server
+          # Replace with your registry path, e.g. ghcr.io/obrienma/event-horizon:latest
+          image: ghcr.io/obrienma/event-horizon:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: event-horizon-config
+            - secretRef:
+                name: event-horizon-secrets
+          # Liveness: if MongoDB is unreachable for 3 consecutive checks (45s),
+          # k3s kills and restarts the pod.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 5
+          # Readiness: pod is removed from the Service endpoints until MongoDB
+          # responds. Prevents routing to a pod that hasn't finished connecting.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 2
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "256m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: event-horizon-server
+  namespace: event-horizon
+spec:
+  selector:
+    app: event-horizon-server
+  # NodePort for direct access from the host during development.
+  # Replace with ClusterIP + Ingress for production.
+  type: NodePort
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30080
+      name: http

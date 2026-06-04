@@ -1,6 +1,6 @@
 # ADR 0011 — Change Stream Resume Token Recovery
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0013](0013-durable-resume-token-checkpoint.md)
 
 ---
 

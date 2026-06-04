@@ -1,0 +1,67 @@
+# ── Worker: AMQP Consumer ──────────────────────────────────────────────────────
+# Runs dist/processing/worker.js (CMD override on the shared image).
+# Consumes from events.work, enriches, classifies, writes to MongoDB, acks.
+#
+# Competing Consumers pattern: replicas > 1 is safe because:
+#   - Each replica consumes from the same durable queue (broker distributes
+#     messages round-robin across consumers).
+#   - MongoDB inserts are idempotent (unique index on raw.id, 11000 swallowed).
+#   - app-level retry with x-retry-count is per-message, not per-consumer.
+# Scale replicas up to increase throughput; scale down to shed load.
+# Hard limit: replicas should not exceed WORKER_PREFETCH × consumer count
+# relative to queue depth, or you risk head-of-line blocking.
+#
+# No Service: the worker consumes from RabbitMQ — it does not serve traffic.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: event-horizon-worker
+  namespace: event-horizon
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: event-horizon-worker
+  template:
+    metadata:
+      labels:
+        app: event-horizon-worker
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/obrienma/event-horizon:latest
+          imagePullPolicy: Always
+          # Override the default server CMD to run the worker entrypoint.
+          command: ["node", "dist/processing/worker.js"]
+          envFrom:
+            - configMapRef:
+                name: event-horizon-config
+            - secretRef:
+                name: event-horizon-secrets
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          # No HTTP liveness probe — the worker has no HTTP server.
+          # restartPolicy: Always (Deployment default) restarts on process exit.
+          #
+          # TODO: Add an exec-based liveness probe if silent hangs (AMQP
+          # channel open but no messages processing) become a concern:
+          #
+          #   livenessProbe:
+          #     exec:
+          #       command:
+          #         - sh
+          #         - -c
+          #         - |
+          #           AGE=$(( $(date +%s) - $(stat -c %Y /tmp/worker-healthy 2>/dev/null || echo 0) ))
+          #           test $AGE -lt 60
+          #     initialDelaySeconds: 15
+          #     periodSeconds: 30
+          #     failureThreshold: 2
+          #
+          # Requires the worker to touch /tmp/worker-healthy after each
+          # successful ack (one fs.utimesSync call per message).

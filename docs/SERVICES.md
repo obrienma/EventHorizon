@@ -80,7 +80,7 @@ Registers three routes on the Fastify instance:
 | `POST /events` | Validate → store as `queued` → publish to RabbitMQ → `202` |
 | `GET /events` | Paginated query with `?page`, `?limit`, `?type`, `?status` filters |
 | `GET /events/:id` | Single event by MongoDB `_id` |
-| `GET /health` | Liveness check |
+| `GET /healthz` | Dependency-aware liveness/readiness probe (pings MongoDB) |
 
 ---
 
@@ -137,7 +137,13 @@ Generic typed repository over a MongoDB collection. Key method: `insertOne()` us
 
 ### `src/observation/changeStream.ts`
 
-Opens a MongoDB change stream on the `events` collection, filtered to `{ operationType: "insert" }`. Accepts an `onInsert: (event: StoredEvent) => void` callback invoked for each insert. Returns a `() => Promise<void>` teardown function for graceful shutdown.
+Opens a MongoDB change stream on the `events` collection, filtered to `{ operationType: "insert" }`. Accepts an `onInsert: (event: StoredEvent) => void` callback invoked for each insert. Returns a `Promise<() => Promise<void>>` teardown function for graceful shutdown.
+
+On every delivered event the resume token is advanced and persisted via `checkpoint.ts`. On cursor error, reopens with `{ resumeAfter: lastToken }` after exponential backoff (1s → 30s). Detects oplog overrun (error 286) and clears the stale checkpoint before retrying from the current oplog head.
+
+### `src/observation/checkpoint.ts`
+
+Persists the change stream resume token to a `changestream_checkpoints` MongoDB collection (single document, upsert on every event). On startup, `startChangeStream` loads the saved token so pod restarts replay missed events rather than silently re-anchoring at the current oplog head.
 
 ### `src/observation/wsServer.ts`
 

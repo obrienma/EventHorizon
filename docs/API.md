@@ -125,11 +125,19 @@ Current RabbitMQ queue metrics, fetched from the Management API.
 
 ---
 
-### `GET /health`
+### `GET /healthz`
 
-Liveness check. Returns `200` if the server is running; does not check dependency health.
+Dependency-aware liveness and readiness probe. Pings MongoDB on every request. Used by k3s liveness and readiness probes.
 
-**Response `200`:** `{ "status": "ok", "uptime": 3600 }`
+**Response `200`:**
+```json
+{ "status": "ok", "mongo": "ok" }
+```
+
+**Response `503`** (MongoDB unreachable):
+```json
+{ "status": "degraded", "mongo": "error: <message>" }
+```
 
 ---
 

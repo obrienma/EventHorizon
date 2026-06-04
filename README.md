@@ -84,15 +84,25 @@ src/
     event.repository.ts         # Append-only repo, idempotent insert
 
   observation/                  # ── Observation Plane ──
-    changeStream.ts             # MongoDB change stream → async iterable
-    wsServer.ts                 # WebSocket connection manager
-    metrics.ts                  # Rolling stats, lag, distribution
+    changeStream.ts             # Change stream with resume token + backoff
+    checkpoint.ts               # Persists resume token to MongoDB (pod-restart safe)
+    wsServer.ts                 # WebSocket connection manager + broadcast
+    metrics.ts                  # Rolling stats, lag, type distribution
+
+  health.routes.ts              # GET /healthz — MongoDB ping for k3s probes
 
   dashboard/
     index.html                  # Single-file live dashboard (vanilla JS)
 
   seed/
     producer.ts                 # CLI fake event generator
+
+k3s/
+  namespace.yaml
+  configmap.yaml
+  secret.yaml                   # Template — replace values before applying
+  server.yaml                   # Deployment + NodePort Service
+  worker.yaml                   # Deployment (replicas: 2, CMD override)
 ```
 
 ## 🗺️ Roadmap
@@ -121,9 +131,36 @@ src/
 - [x] `src/observation/wsServer.ts` — WebSocket connection manager + broadcast
 - [x] `src/observation/metrics.ts` — rolling stats, lag, type distribution
 
-### 🚧 Phase 6 — Dashboard + Seed
+### ✅ Phase 6 — Dashboard + Seed
 - [x] `src/seed/producer.ts` — CLI fake event generator
 - [x] `src/dashboard/index.html` — live feed, stats bar, event detail (vanilla JS)
+
+### ✅ Phase 7–9 — Tests
+- [x] Processor unit tests (`enrich`, `classify`)
+- [x] Repository tests with `mongodb-memory-server`
+- [x] Route tests with Fastify `inject()` + `vi.mock`
+- [x] Metrics tests with `vi.useFakeTimers`
+- [x] Worker handler tests (ack/nack/retry/DLQ paths)
+
+### ✅ Phase 10 — Bug Fix: Flow Control
+- [x] `ch.publish()` return value handled — no silent message drop under backpressure
+- [x] `messageId` threaded through retry republish
+
+### ✅ Phase 11 — Durable Resume Token
+- [x] `src/observation/checkpoint.ts` — persists change stream token to MongoDB
+- [x] Pod restarts replay missed events; oplog overrun (error 286) detected and cleared
+
+### ✅ Phase 12 — Dockerfile
+- [x] Multi-stage build: compiler stage + lean production runtime (~181 MB)
+- [x] Non-root user; test files excluded from `dist/` via `tsconfig.build.json`
+
+### ✅ Phase 13 — Health Check
+- [x] `GET /healthz` — pings MongoDB; 200 ok / 503 degraded
+- [x] Wired to k3s liveness and readiness probes
+
+### ✅ Phase 14 — k3s Manifests
+- [x] Namespace, ConfigMap, Secret template, server Deployment+Service, worker Deployment
+- [x] Worker runs `replicas: 2` (Competing Consumers — safe with idempotent inserts)
 
 ## 🚀 Quick Start
 
@@ -159,6 +196,7 @@ open http://localhost:3000/dashboard
 | `npm run infra:down` | `docker compose down` |
 | `npm test` | Run Vitest suite |
 | `npm run test:watch` | Vitest in watch mode |
+| `npm run build` | Compile to `dist/` (production, no test files) |
 | `npm run typecheck` | `tsc --noEmit` |
 
 ## 🧠 TS Patterns Demonstrated

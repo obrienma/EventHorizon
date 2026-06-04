@@ -147,6 +147,7 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 10. ~~`src/observation/checkpoint.ts` — durable resume token persistence (k3s pod-restart safe)~~ ✓
 11. ~~`Dockerfile` — multi-stage build, non-root runner, single image / two entry points~~ ✓
 12. ~~`src/health.routes.ts` — dependency-aware `/healthz` endpoint for k3s liveness/readiness probes~~ ✓
+13. ~~`k3s/` manifests — namespace, ConfigMap, Secret, server Deployment+Service, worker Deployment~~ ✓
 
 **Tests written so far:**
 - `src/processors/enrich.test.ts` ✓

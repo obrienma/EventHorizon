@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: event-horizon-config
+  namespace: event-horizon
+data:
+  # Server
+  PORT: "3000"
+  HOST: "0.0.0.0"
+
+  # MongoDB — non-secret config. URI and credentials go in secret.yaml.
+  MONGO_DB_NAME: "event-horizon"
+
+  # RabbitMQ — adjust service name to match your RabbitMQ deployment.
+  # The management URL is used by the metrics module to poll queue depth.
+  # Pattern: <service-name>.<namespace>.svc.cluster.local
+  RABBITMQ_MANAGEMENT_URL: "http://guest:guest@rabbitmq.event-horizon.svc.cluster.local:15672"
+
+  # Queue / exchange topology — must match the values used when the broker
+  # topology was first declared. Changing these requires draining the old
+  # queues first (the declarations are idempotent only with identical args).
+  EXCHANGE_NAME: "events"
+  QUEUE_NAME: "events.work"
+  DEAD_LETTER_QUEUE: "events.dead"
+
+  # Worker backpressure
+  WORKER_PREFETCH: "5"
+
+  # Queue depth alert thresholds for the dashboard status indicator
+  QUEUE_DEPTH_WARNING: "50"
+  QUEUE_DEPTH_CRITICAL: "200"
+
+  # Observability intervals (milliseconds)
+  STATS_PUSH_INTERVAL_MS: "5000"
+  METRICS_RATE_WINDOW_MS: "10000"
+  EVENT_DISTRIBUTION_POLL_MS: "10000"
