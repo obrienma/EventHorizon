@@ -145,6 +145,7 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 8. Tests colocated per layer (Fastify inject + vi.mock → real mongodb-memory-server at bottom)
 9. ~~`src/observation/changeStream.ts` — resume token recovery + exponential backoff~~ ✓
 10. ~~`src/observation/checkpoint.ts` — durable resume token persistence (k3s pod-restart safe)~~ ✓
+11. ~~`Dockerfile` — multi-stage build, non-root runner, single image / two entry points~~ ✓
 
 **Tests written so far:**
 - `src/processors/enrich.test.ts` ✓

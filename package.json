@@ -12,6 +12,7 @@
     "infra:down": "docker compose down",
     "test": "vitest run",
     "test:watch": "vitest",
+    "build": "rm -rf dist/ && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],
