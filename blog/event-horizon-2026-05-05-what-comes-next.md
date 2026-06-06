@@ -1,13 +1,18 @@
 ---
 title: "What Comes Next: Multi-Server Deployments, Persistent Resume Tokens, and the Patterns That Transfer"
 date: 2026-05-05
+updated: 2026-06-03
 tags: [event-horizon, distributed-systems, retrospective, kubernetes, observability]
-summary: EventHorizon is feature-complete. It is also a single-server toy. The interesting question is which of its patterns survive the move to a real production environment, and which need to be reworked entirely.
+summary: EventHorizon is feature-complete as a learning vehicle. The interesting question is which of its patterns survive the move to a real production environment, and which need to be reworked entirely.
+---
+
+_Some items described as future work in this post were subsequently implemented. See [Closing the Gap](./event-horizon-2026-06-03-closing-the-production-gap.md) for the follow-up._
+
 ---
 
 I'm calling EventHorizon done. The four planes are wired. The pipeline self-heals on transient cursor failures. The dashboard pushes events live. The shutdown sequence drains cleanly. The test suite covers what it should cover, and the gaps are documented. The series of blog posts you've just read is, in a real sense, the project's retrospective.
 
-But "done" is doing some work in that sentence. EventHorizon is *done as a learning vehicle*. It is not done in the sense that you could deploy it tomorrow and run someone's production telemetry through it. The gap between those two states is the subject of this final post.
+But "done" is doing some work in that sentence. EventHorizon is *done as a learning vehicle*. It is not done in the sense that you could deploy it tomorrow and run someone's production telemetry through it. The gap between those two states is the subject of this post.
 
 I want to walk through what would have to change, what wouldn't, and — most usefully — *which of the patterns I've written about in this series transfer beyond their specific implementations.* Patterns are interesting, implementations are disposable. The question is which is which.
 
@@ -31,9 +36,9 @@ Five patterns, all transferable, all already correct in EventHorizon. That's mos
 
 A handful of things only work because there's one server.
 
-**The in-memory resume token.** Right now, the change stream's resume token lives in a closure variable in the server process. A server restart loses it. Events written during the outage are not replayed to the dashboard.
+**The in-memory resume token.** At the time of writing, the change stream's resume token lives in a closure variable in the server process. A server restart loses it. Events written during the outage are not replayed to the dashboard.
 
-In production, you'd want to persist the token. The right place depends on the deployment: a small Redis instance, a dedicated MongoDB collection, a local file checkpoint. The trade-off is one I deferred deliberately (ADR 0011): in exchange for a startup-read path and some new failure modes around stale or corrupt tokens, you get cross-restart continuity. It's the next thing I'd implement if I needed it.
+This was subsequently implemented: the token is now persisted to a `changestream_checkpoints` MongoDB collection via `src/observation/checkpoint.ts`. ADR-0011 is superseded by ADR-0013, which documents the decision and addresses the circular-dependency concern that originally motivated the deferral.
 
 **The single-process server.** EventHorizon's `server.ts` runs Fastify, the change stream, the metrics interval, and the WebSocket server *in one process.* That's fine for one-server scale. At larger scale, you'd separate them: the HTTP server is one deployment, the change-stream-to-WebSocket fan-out is another, the metrics poller is a third. Each can scale independently. Each can fail independently.
 
@@ -58,6 +63,8 @@ These are the gaps I'd close if EventHorizon were going to take real traffic.
 The interesting bit is that the metrics module already has *most* of the data structured the way Prometheus would want it. `totalProcessed`, `failedCount`, `queueDepth`, `processingRatePerSec` — these are textbook Prometheus metric names. Wiring them up to a `/metrics` endpoint is a 50-line change. The hard work was building the rolling-window aggregation; the export format is the easy part.
 
 **Deployment infrastructure.** A `docker-compose.yml` for development is not a production deployment. Real production needs a Kubernetes manifest (or Nomad, or whatever the org uses), a CI/CD pipeline that builds and tests on every commit, secrets management, environment promotion. This is all conventional work — it doesn't change the application architecture — but the application doesn't run in production until it's done.
+
+This was subsequently implemented: a multi-stage Dockerfile, a `/healthz` health probe, and k3s manifests (namespace, ConfigMap, Secret, server Deployment + Service, worker Deployment with `replicas: 2`) now live in the `k3s/` directory.
 
 ## What I'd build differently if I started over
 

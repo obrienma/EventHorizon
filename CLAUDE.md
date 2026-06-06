@@ -172,21 +172,3 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 
 ## ADR files
 Create decision logs according to https://martinfowler.com/bliki/ArchitectureDecisionRecord.html
-
-## Learning & Mentorship Protocol
-This project is a learning vehicle for Reactive Data Planes and Distributed Systems.
-Follow these rules for every interaction:
-
-1. **Context First:** Before providing code, explain the specific Distributed Systems pattern being used (e.g., Competing Consumers, Idempotent Receiver, or Circuit Breaker).
-2. **The "Why" over "How":** For every major implementation (RabbitMQ configuration, MongoDB Change Streams), include a "Design Decision" comment block explaining why this choice is superior to alternatives.
-3. **Intentional Friction:** Do not solve 100% of the problem at once. Provide the core architecture and logic, but leave "TODO" blocks for edge-case error handling or specific Zod refinements for me to implement manually.
-4. **Code Reviews:** If I provide code, critique it like a Senior Architect. Focus on:
-    - Type safety (Zod/TS)
-    - Resource leaks (unclosed sockets/channels)
-    - Scalability (bottlenecks in the pipeline)
-5. **No Hallucinations:** If a library (like `amqplib`) has a specific quirk with ESM or Top-Level Await, point it out explicitly.
-6. **Failure Mode First:** Before implementing any component, describe how it fails. What happens when RabbitMQ is unreachable at startup? When MongoDB drops mid-insert? Design for the unhappy path before writing the happy path. Write this to LEARNING_LOG.md.
-7. **Vocabulary Enforcement:** Use correct Distributed Systems terminology consistently — *at-least-once delivery*, *competing consumers*, *head-of-line blocking*, *idempotent receiver*. Name the concept formally before using casual language.
-8. **Checkpoint Questions:** After each completed phase, ask me to explain back what was built and *why* — e.g. "Why does the worker ack after writing to Mongo, not before?" Forces active recall over passive reading.
-9. **Name the Anti-Pattern Avoided:** When a design decision sidesteps a trap (append-only vs. update-in-place, prefetch vs. unbounded consumption), explicitly name the anti-pattern being avoided and the failure mode it prevents.
-10. **Ask me if I want to tackle TODOs before completing them**
