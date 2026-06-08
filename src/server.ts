@@ -1,10 +1,12 @@
+import "./observation/tracing.js"; // must be first — registers OTel hooks before any instrumented module loads
+import { trace, SpanKind } from "@opentelemetry/api";
 import { app } from "./app.js";
 import { config } from "./config.js";
 import { connectQueue, closeQueue } from "./processing/queue.js";
 import { connectDb, closeDb } from "./storage/db.js";
 import { ensureIndexes } from "./storage/event.repository.js";
 import { startChangeStream } from "./observation/changeStream.js";
-import { broadcast } from "./observation/wsServer.js";
+import { broadcast, getConnectionCount } from "./observation/wsServer.js";
 import { startMetrics, recordInsert } from "./observation/metrics.js";
 
 // ── Startup ───────────────────────────────────────────────────────────────────
@@ -12,9 +14,23 @@ await connectDb();
 await ensureIndexes();
 await connectQueue();
 
+const observeTracer = trace.getTracer("event-horizon-observe");
+
 const closeChangeStream = await startChangeStream((event) => {
+  const startMs = Date.now();
+  const span = observeTracer.startSpan("event.observe", { kind: SpanKind.INTERNAL });
+
   recordInsert(event);
   broadcast({ type: "event", data: event });
+
+  span.setAttributes({
+    "event.id": event.raw.id,
+    "event.type": event.raw.type,
+    "subscribers.count": getConnectionCount(),
+    "fanout.duration_ms": Date.now() - startMs,
+    "changeStream.lag_ms": Date.now() - event._id.getTimestamp().getTime(),
+  });
+  span.end();
 });
 
 const stopMetrics = startMetrics(broadcast);

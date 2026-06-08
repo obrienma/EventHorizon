@@ -28,6 +28,10 @@ const PING_INTERVAL_MS = 30_000;
 // Exported so the change stream and metrics can push to all clients.
 // Safe to call with zero connected clients — iterates an empty Map.
 
+export function getConnectionCount(): number {
+  return clients.size;
+}
+
 export function broadcast(message: WsMessage): void {
   const payload = JSON.stringify(message);
   for (const [socket] of clients) {

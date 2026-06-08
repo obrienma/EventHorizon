@@ -143,6 +143,19 @@ Covers:
 | **RabbitMQ worker** | AMQP channel mocks are fragile. The worker's logic (`enrich` + `classify` + `repository`) is tested individually. |
 | **Graceful shutdown** | Process signal handling is hard to assert in tests. Verify manually with `Ctrl+C` during active load. |
 | **Change stream delivery** | Requires a real MongoDB replica set — `mongodb-memory-server` supports it but adds significant test complexity. Verify manually. |
+| **Distributed tracing (OTel spans)** | Requires a running OTel Collector + Tempo. `@opentelemetry/api` falls back to a `NoopTracerProvider` under Vitest — `trace.getActiveSpan()` returns `undefined`, `propagation.inject`/`extract` are no-ops. The SDK never initializes in tests, so there is nothing to assert against. Verify manually (see below). |
+
+---
+
+## Manual Verification: Distributed Tracing
+
+Requires the OTel Collector + Tempo + Grafana stack described in `docs/DEV_GETTING_STARTED.md` → "Viewing Distributed Traces". Find traces in Grafana via **Explore** → **Tempo** → service name `event-horizon`.
+
+- [ ] **Trace continuity across the RabbitMQ boundary** — send one event and find its trace. The `event.process` span (worker, `SpanKind.CONSUMER`) should appear as a *child* of the HTTP ingest span — one connected waterfall, not two disconnected root traces. A disconnected trace means `propagation.inject`/`extract` isn't wiring correctly; see the amqplib Buffer-encoded-headers Challenge in `LEARNING_LOG.md` Phase 15.
+- [ ] **Wide span attributes present** — `event.process` carries `event.id`, `event.type`, `classification`, `classification.tags`, `retry.count`, `write.collection`; `event.observe` carries `subscribers.count`, `fanout.duration_ms`, `changeStream.lag_ms`; the HTTP ingest span carries `event.id`, `event.type`, `event.source`, `payload.size_bytes`.
+- [ ] **Parse-failure span events surface** — publish a message that passes the HTTP `EventSchema.safeParse()` check but fails the worker's `EventSchema.parse()` (e.g. use the RabbitMQ Management UI's "Publish message" on the `events` exchange with a malformed body). The resulting `event.process` span should show `status: ERROR` and a `message.parse_failed` event carrying `exception.type`, `exception.message`, `msg.routing_key`, `msg.size_bytes`, `retry.count` — queryable via `{ name="event.process" && event.name="message.parse_failed" }` in TraceQL.
+- [ ] **HTTP-boundary validation events** — `POST /events` with an invalid body; the auto-instrumented HTTP span should carry a `validation.failed` event with `error.count` and `payload.size_bytes`.
+- [ ] **Retry chain visible** — force a transient processing error (e.g. stop MongoDB mid-flight); confirm `retry.count` increments across redelivered spans and the final dead-lettered attempt shows `status: ERROR`.
 
 ---
 

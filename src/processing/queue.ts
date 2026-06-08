@@ -1,4 +1,5 @@
 import amqp from "amqplib";
+import { propagation, context } from "@opentelemetry/api";
 import { config } from "../config.js";
 import type { AppEvent } from "../ingestion/event.schema.js";
 
@@ -77,12 +78,17 @@ export function publishEvent(event: AppEvent): void {
   const routingKey = `events.${event.type}`;
   const body = Buffer.from(JSON.stringify(event));
 
+  // Inject the active trace context so the worker can continue the trace.
+  const headers: Record<string, string> = {};
+  propagation.inject(context.active(), headers);
+
   // channel.publish() returns false when the write buffer is full (backpressure).
   // TODO: implement drain handling for high-throughput scenarios.
   const ok = channel.publish(config.EXCHANGE_NAME, routingKey, body, {
     persistent: true,
     contentType: "application/json",
     messageId: event.id,
+    headers,
   });
 
   if (!ok) {

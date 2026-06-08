@@ -87,6 +87,23 @@ You should see events flowing in real time within a few seconds of starting the 
 
 ---
 
+## Viewing Distributed Traces
+
+EventHorizon emits OpenTelemetry traces from both `npm run dev` and `npm run worker` (see `src/observation/tracing.ts` and ADR 0015). To see them, you need an OTel Collector + Tempo + Grafana stack reachable at the OTLP/HTTP endpoint configured in `.env` (`OTEL_EXPORTER_OTLP_ENDPOINT`, defaults to `http://localhost:4318`).
+
+That stack is **not part of this repo** — it's a shared local backend (see `.observability/OBSERVABILITY_MIGRATION_PLAN.md` Phase 0 for the docker-compose setup and architecture). Start it before starting EventHorizon. The OTel SDK fails silently if the collector is unreachable: no error, just no trace data — so if Tempo shows nothing, check the collector is up and the endpoint matches before suspecting the app.
+
+Once the collector stack is running:
+
+1. Send an event — `npm run seed -- --rate=1 --duration=5` or `POST /events` directly.
+2. Open Grafana on the collector stack (default `http://localhost:3000` — note this collides with the EventHorizon dashboard's default port; run one on a different port if you need both at once).
+3. **Explore** → **Tempo** datasource → search by service name `event-horizon` (worker spans report under the same service name).
+4. A single trace should span all four pipeline stages as one connected waterfall: HTTP ingest → AMQP publish → `event.process` (worker, continues the trace across the RabbitMQ boundary) → MongoDB insert → `event.observe` (change-stream fanout to WebSocket clients).
+
+For the full manual verification checklist — confirming trace continuity, span attributes, and parse-failure span events — see "Manual Verification: Distributed Tracing" in `docs/TESTING.md`. Tracing isn't covered by the automated suite: `@opentelemetry/api` falls back to a `NoopTracerProvider` under Vitest, so the SDK never initializes and there's nothing to assert against.
+
+---
+
 ## Observing Backpressure
 
 To see backpressure in action:

@@ -1,0 +1,1 @@
+Phase 3 complete: SDK bootstrapped; RabbitMQ context propagation wired (inject on publish, extract on consume); wide spans on ingest, process, and observe stages; parse-failure span events surfaced; 44 tests pass.

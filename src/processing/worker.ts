@@ -1,14 +1,18 @@
+import "../observation/tracing.js"; // must be first — registers OTel hooks before any instrumented module loads
 import amqp from "amqplib";
+import { trace, context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { ZodError } from "zod";
 import { config } from "../config.js";
 import { EventSchema, type AppEvent } from "../ingestion/event.schema.js";
 import { enrich } from "../processors/enrich.js";
 import { classify } from "../processors/classify.js";
 import { connectDb, closeDb } from "../storage/db.js";
-import { saveEvent, saveFailedEvent, ensureIndexes } from "../storage/event.repository.js";
+import { saveEvent, saveFailedEvent, ensureIndexes, EVENTS_COLLECTION } from "../storage/event.repository.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MAX_RETRIES = 3;
+const tracer = trace.getTracer("event-horizon-worker", "1.0.0");
 
 // ── startWorker ───────────────────────────────────────────────────────────────
 // Pattern: Competing Consumers
@@ -68,73 +72,127 @@ export async function startWorker(): Promise<() => Promise<void>> {
       // starve all other messages behind it. Instead, we republish to the BACK
       // of the queue with an incremented counter and let natural expiry (x-message-ttl)
       // act as a final safety net.
-      const headers = (msg.properties.headers ?? {}) as Record<string, unknown>;
+      const msgHeaders = (msg.properties.headers ?? {}) as Record<string, unknown>;
       const retryCount =
-        typeof headers["x-retry-count"] === "number" ? headers["x-retry-count"] : 0;
+        typeof msgHeaders["x-retry-count"] === "number" ? msgHeaders["x-retry-count"] : 0;
+
+      // Extract OTel trace context from headers. Filter to string-valued keys only
+      // since amqplib encodes non-string header values as Buffer objects.
+      const carrier: Record<string, string> = {};
+      for (const [k, v] of Object.entries(msgHeaders)) {
+        if (typeof v === "string") carrier[k] = v;
+      }
+      const parentCtx = propagation.extract(context.active(), carrier);
+
+      const span = tracer.startSpan(
+        "event.process",
+        {
+          kind: SpanKind.CONSUMER,
+          attributes: {
+            "messaging.system": "rabbitmq",
+            "messaging.destination": config.QUEUE_NAME,
+            "msg.routing_key": msg.fields.routingKey,
+            "retry.count": retryCount,
+          },
+        },
+        parentCtx,
+      );
 
       // Hoisted so the catch block can call saveFailedEvent(event) when we have
       // a valid parsed event. If parsing itself throws, event stays undefined.
       let event: AppEvent | undefined;
 
-      try {
-        // TODO: replace JSON.parse + EventSchema.parse with EventSchema.safeParse().
-        // If parsing fails, should we retry (schema bug?) or dead-letter immediately
-        // (malformed producer)? Think about which failure mode this represents.
-        const raw: unknown = JSON.parse(msg.content.toString());
-        event = EventSchema.parse(raw);
+      await context.with(trace.setSpan(parentCtx, span), async () => {
+        try {
+          // TODO: replace JSON.parse + EventSchema.parse with EventSchema.safeParse().
+          // If parsing fails, should we retry (schema bug?) or dead-letter immediately
+          // (malformed producer)? Think about which failure mode this represents.
+          const raw: unknown = JSON.parse(msg.content.toString());
+          event = EventSchema.parse(raw);
 
-        const enriched = enrich(event, receivedAt);
-        const classified = classify(event);
+          span.setAttributes({
+            "event.id": event.id,
+            "event.type": event.type,
+            "event.source": event.source,
+            "event.timestamp": event.timestamp,
+          });
 
-        await saveEvent(event, { ...enriched, ...classified });
-        console.log(
-          `[worker] processed ${event.type} event ${event.id}`,
-          { classification: classified.classification, tags: classified.tags },
-        );
+          const enriched = enrich(event, receivedAt);
+          const classified = classify(event);
 
-        ch.ack(msg);
-      } catch (err) {
-        console.error(`[worker] error processing message (retry ${retryCount}/${MAX_RETRIES}):`, err);
+          span.setAttributes({
+            "classification": classified.classification,
+            "classification.tags": classified.tags.join(","),
+            "write.collection": EVENTS_COLLECTION,
+          });
 
-        if (retryCount < MAX_RETRIES) {
-          // Republish to the BACK of the queue with an incremented retry count.
-          // We ack the original so it doesn't occupy a prefetch slot while waiting.
-          //
-          // ch.publish() is synchronous and returns false when the broker applies
-          // flow control (channel write buffer full). If that happens, do NOT ack
-          // the original — let RabbitMQ redeliver it. The occupied prefetch slot
-          // is intentional: it applies backpressure to this consumer while the
-          // broker is under load.
-          const published = ch.publish(
-            config.EXCHANGE_NAME,
-            msg.fields.routingKey,
-            msg.content,
-            {
-              persistent: true,
-              contentType: msg.properties.contentType ?? "application/json",
-              messageId: msg.properties.messageId as string | undefined,
-              headers: { ...headers, "x-retry-count": retryCount + 1 },
-            },
+          await saveEvent(event, { ...enriched, ...classified });
+          span.setStatus({ code: SpanStatusCode.OK });
+          console.log(
+            `[worker] processed ${event.type} event ${event.id}`,
+            { classification: classified.classification, tags: classified.tags },
           );
-          if (published) {
-            ch.ack(msg);
-          } else {
-            console.warn("[worker] ch.publish() returned false (flow control) — holding ack, broker will redeliver");
-          }
-        } else {
-          // Exhausted retries — nack without requeue → DLX routes to events.dead.
-          // At-least-once delivery guarantee is preserved: we never silently drop.
-          console.error(`[worker] dead-lettering message ${msg.properties.messageId ?? "(no id)"} after ${MAX_RETRIES} retries`);
-          // Best-effort: record the failed event in MongoDB for observability.
-          // Wrapped in .catch() so a MongoDB failure never blocks the nack.
-          if (event !== undefined) {
-            await saveFailedEvent(event).catch((saveErr: unknown) => {
-              console.error("[worker] could not record failed event in MongoDB:", saveErr);
+
+          ch.ack(msg);
+        } catch (err) {
+          // Parse/schema failures are the known "silent-drop" path — surface them
+          // as span events so they are queryable in Tempo.
+          if (err instanceof SyntaxError || err instanceof ZodError) {
+            span.addEvent("message.parse_failed", {
+              "exception.type": err.constructor.name,
+              "exception.message": err.message.slice(0, 512),
+              "msg.routing_key": msg.fields.routingKey,
+              "msg.size_bytes": msg.content.length,
+              "retry.count": retryCount,
             });
           }
-          ch.nack(msg, false, false);
+
+          span.recordException(err instanceof Error ? err : new Error(String(err)));
+          span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).message });
+          console.error(`[worker] error processing message (retry ${retryCount}/${MAX_RETRIES}):`, err);
+
+          if (retryCount < MAX_RETRIES) {
+            // Republish to the BACK of the queue with an incremented retry count.
+            // We ack the original so it doesn't occupy a prefetch slot while waiting.
+            //
+            // ch.publish() is synchronous and returns false when the broker applies
+            // flow control (channel write buffer full). If that happens, do NOT ack
+            // the original — let RabbitMQ redeliver it. The occupied prefetch slot
+            // is intentional: it applies backpressure to this consumer while the
+            // broker is under load.
+            const published = ch.publish(
+              config.EXCHANGE_NAME,
+              msg.fields.routingKey,
+              msg.content,
+              {
+                persistent: true,
+                contentType: msg.properties.contentType ?? "application/json",
+                messageId: msg.properties.messageId as string | undefined,
+                headers: { ...msgHeaders, "x-retry-count": retryCount + 1 },
+              },
+            );
+            if (published) {
+              ch.ack(msg);
+            } else {
+              console.warn("[worker] ch.publish() returned false (flow control) — holding ack, broker will redeliver");
+            }
+          } else {
+            // Exhausted retries — nack without requeue → DLX routes to events.dead.
+            // At-least-once delivery guarantee is preserved: we never silently drop.
+            console.error(`[worker] dead-lettering message ${msg.properties.messageId ?? "(no id)"} after ${MAX_RETRIES} retries`);
+            // Best-effort: record the failed event in MongoDB for observability.
+            // Wrapped in .catch() so a MongoDB failure never blocks the nack.
+            if (event !== undefined) {
+              await saveFailedEvent(event).catch((saveErr: unknown) => {
+                console.error("[worker] could not record failed event in MongoDB:", saveErr);
+              });
+            }
+            ch.nack(msg, false, false);
+          }
+        } finally {
+          span.end();
         }
-      }
+      });
     },
     { noAck: false }, // Manual acknowledgement — required for at-least-once delivery.
   );
