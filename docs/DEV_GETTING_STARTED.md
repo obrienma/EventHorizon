@@ -1,5 +1,7 @@
 # Getting Started (Local Development)
 
+_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
+
 ## Prerequisites
 
 - Node.js 20+

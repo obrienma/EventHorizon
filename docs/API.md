@@ -1,5 +1,7 @@
 # API Reference
 
+_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
+
 Base URL: `http://localhost:3000`
 
 ---
@@ -62,6 +64,8 @@ Ingest a new event. Validated against the Zod discriminated union. Published to 
 | `202` | `{ "eventId": "<uuid>" }` | Accepted, queued for processing |
 | `422` | `{ "error": "Validation failed", "issues": [...] }` | Zod validation rejected the body |
 | `500` | `{ "error": "..." }` | RabbitMQ publish failed |
+
+> **Tracing:** when a request is part of an OpenTelemetry trace, the active W3C trace context is injected into the published AMQP message headers, so the worker's `event.process` span continues the same trace started here. See [ARCHITECTURE.md](ARCHITECTURE.md#tracing--instrumentation).
 
 ---
 

@@ -1,5 +1,7 @@
 # Architecture
 
+_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
+
 EventHorizon is structured as four explicit **planes**, each with a single responsibility. The planes are one-directional: data flows inward through ingestion, down through processing and storage, and out through observation. Nothing flows backwards.
 
 ## System Diagram
@@ -76,7 +78,7 @@ Append-only. Events are never updated. A unique index on `raw.id` (the UUID from
 
 Three components:
 
-1. **`changeStream.ts`** — opens a MongoDB change stream on the `events` collection, filtered to `insert` operations. Accepts an `onInsert` callback and calls it for each new document. Returns a teardown function used during graceful shutdown.
+1. **`changeStream.ts`** — opens a MongoDB change stream on the `events` collection, filtered to `insert` operations. Accepts an `onInsert` callback and calls it for each new document. Returns a teardown function used during graceful shutdown. Recovers from cursor errors by reopening with `{ resumeAfter: lastToken }` after exponential backoff; the token is persisted via `checkpoint.ts` so **pod restarts replay missed events** rather than re-anchoring at the current oplog head (oplog overrun, error 286, clears the stale checkpoint). See ADR 0013.
 
 2. **`wsServer.ts`** — manages connected WebSocket clients. Iterates the change stream and broadcasts each new `StoredEvent` as a `{ type: "event", data }` message. Handles client connect/disconnect without leaking listeners.
 
@@ -108,6 +110,19 @@ flowchart LR
 - Topic exchange with `events.#` binding — makes adding new event types zero-config (no new bindings needed)
 - `x-message-ttl` on the work queue — messages that sit unprocessed for 30s are dead-lettered automatically, preventing indefinite build-up during worker outages
 - Worker retries are handled at the application level (up to 3 attempts tracked in the message header `x-retry-count`) before the final `nack`
+
+---
+
+## Tracing & Instrumentation
+
+EventHorizon emits **OpenTelemetry** traces from both process entry points (`npm run dev` and `npm run worker`). The SDK is bootstrapped in `src/observation/tracing.ts` and exports spans over OTLP/HTTP (`OTEL_EXPORTER_OTLP_ENDPOINT`, default `http://localhost:4318`). If no collector is reachable the SDK no-ops silently — there is no hard dependency on a tracing backend.
+
+The design favours **wide spans** (many attributes per span, queried after the fact) over pre-aggregated counters — see ADR 0016. Two first-class spans bracket the pipeline:
+
+- **`event.process`** (`SpanKind.CONSUMER`, worker) — carries `event.id`, `event.type`, `classification`, `classification.tags`, `retry.count`, `write.collection`, and `messaging.*` attributes. A message that fails `EventSchema.parse()` records a `message.parse_failed` span event and sets the span status to `ERROR`.
+- **`event.observe`** (`SpanKind.INTERNAL`, server) — carries `subscribers.count`, `fanout.duration_ms`, and `changeStream.lag_ms` for the change-stream → WebSocket fanout.
+
+**Trace continuity across the RabbitMQ boundary** is the key property: `queue.ts` injects the active W3C trace context into the AMQP message headers (`propagation.inject`), and `worker.ts` extracts it (`propagation.extract`) so the consumer span continues the same trace started at HTTP ingest. The result is a single connected waterfall — HTTP ingest → AMQP publish → `event.process` → MongoDB insert → `event.observe` — rather than two disconnected root traces. SDK bootstrap ordering is covered by ADR 0015; the alerting-vs-analysis split between counters and span attributes by ADR 0016.
 
 ---
 

@@ -1,5 +1,7 @@
 # Services Reference
 
+_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
+
 Per-module breakdown of every file in `src/`. Each entry covers: purpose, key exports, external dependencies, and what to look for when debugging.
 
 ---
@@ -19,6 +21,18 @@ Parses and validates all environment variables using Zod at startup. If any requ
 Fastify application entry point. Registers plugins (`@fastify/websocket`), mounts routes, and orchestrates graceful shutdown on `SIGTERM`/`SIGINT`.
 
 **The shutdown sequence is defined here** — see [ARCHITECTURE.md](ARCHITECTURE.md#graceful-shutdown-sequence).
+
+---
+
+## `src/health.routes.ts`
+
+Registers `GET /healthz`, a dependency-aware liveness/readiness probe. Sends a `{ ping: 1 }` command to MongoDB on every request and returns `200 { status: "ok", mongo: "ok" }` when reachable or `503 { status: "degraded", mongo: "error: <message>" }` when not. Wired to **both** the k3s liveness and readiness probes in `k3s/server.yaml`.
+
+---
+
+## `src/observation/tracing.ts`
+
+OpenTelemetry SDK bootstrap. Imported **first** in both entry points (`server.ts`, `worker.ts`) so instrumentation hooks register before any instrumented module loads (ADR 0015). Configures a `NodeSDK` with `getNodeAutoInstrumentations()` (fs instrumentation disabled — too noisy) and an `OTLPTraceExporter` pointed at `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318`), under service name `OTEL_SERVICE_NAME` (default `event-horizon`). The module has side effects on import and no-ops silently if no collector is reachable. See ADR 0016 for the wide-span design and [ARCHITECTURE.md](ARCHITECTURE.md#tracing--instrumentation) for the spans emitted.
 
 ---
 
@@ -80,7 +94,8 @@ Registers three routes on the Fastify instance:
 | `POST /events` | Validate → store as `queued` → publish to RabbitMQ → `202` |
 | `GET /events` | Paginated query with `?page`, `?limit`, `?type`, `?status` filters |
 | `GET /events/:id` | Single event by MongoDB `_id` |
-| `GET /healthz` | Dependency-aware liveness/readiness probe (pings MongoDB) |
+
+> `GET /healthz` is registered separately in `src/health.routes.ts` (see above), not here.
 
 ---
 

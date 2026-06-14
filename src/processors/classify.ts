@@ -18,20 +18,10 @@ export function classify(event: AppEvent): ClassifiedMeta {
 
   switch (event.type){
     case "pipeline":
-      const {status} = event.payload;
-      return {
-        classification: status === "failed" ? "critical" : "normal",
-        tags: ["pipeline", status],
-      };
+      // TODO: implement this
 
     case "sensor":
-      const { metric, value } = event.payload;
-      const classification: Classification =
-        metric === "temperature" && value > 85 ? "critical" :
-        metric === "temperature" && value > 70 ? "warning" :
-        "normal";
-
-      return { classification, tags: ["sensor", metric] };
+      // TODO: implement this
 
     case "app":
       return {

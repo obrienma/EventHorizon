@@ -1,5 +1,7 @@
 # Testing Strategy
 
+_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
+
 ## Tools
 
 | Tool | Role |
@@ -87,7 +89,7 @@ Covers:
 - `GET /events` → paginated response shape
 - `GET /events/:id` found → `200`
 - `GET /events/:id` not found → `404`
-- `GET /health` → `200`
+- `GET /healthz` → `200` (covered by `src/health.routes.test.ts`)
 
 ```ts
 it("returns 422 when type discriminator is invalid", async () => {

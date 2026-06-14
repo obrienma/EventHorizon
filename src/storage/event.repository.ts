@@ -32,15 +32,9 @@ export async function saveEvent(
   };
 
   try {
-    await getDb().collection(EVENTS_COLLECTION).insertOne(doc);
+    // TODO: implement this
   } catch (err) {
-    if (err instanceof MongoServerError && err.code === 11000) {
-      // Duplicate key — this message was already processed on a prior delivery.
-      // Silently ignore: idempotent insert, not an error.
-      return;
-    }
-    // All other errors re-throw — the worker's catch block will retry/dead-letter.
-    throw err;
+    // TODO: implement this
   }
 }
 

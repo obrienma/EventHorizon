@@ -57,10 +57,7 @@ export function recordInsert(doc: StoredEvent): void {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function computeRatePerSec(): number {
-  const now = Date.now();
-  const cutoff = now - config.METRICS_RATE_WINDOW_MS;
-  const countInWindow = recentInsertTimestamps.filter((ts) => ts >= cutoff).length;
-  return countInWindow / (config.METRICS_RATE_WINDOW_MS / 1000);
+  // TODO: implement this
 }
 
 function queueDepthStatus(depth: number): "ok" | "warning" | "critical" {

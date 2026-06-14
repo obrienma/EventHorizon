@@ -1,5 +1,7 @@
 # EventHorizon
 
+_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
+
 EventHorizon is a **real-time event pipeline** — you send telemetry events in, they get validated, queued, processed, stored, and pushed live to a browser dashboard. All within a second or two of arriving.
 
 It's a **hands-on demo** of backend distributed systems patterns: message queues, change streams, WebSockets, idempotent storage, and graceful shutdown. The telemetry domain is just scaffolding — the interesting part is how the pieces are wired together.
@@ -25,6 +27,7 @@ Ingest telemetry events → validate → queue → worker enriches → store app
 | Database | MongoDB 7 | Append-only event log + change streams |
 | Real-time | WebSockets (`@fastify/websocket`) | Raw WS — no socket.io |
 | Validation | Zod | Shared boundary contract across all layers |
+| Observability | OpenTelemetry tracing | Wide spans on all four planes, OTLP export |
 | Testing | Vitest + mongodb-memory-server | ESM-native, colocated tests |
 
 
@@ -60,6 +63,7 @@ flowchart LR
 | [DEV_GETTING_STARTED.md](docs/DEV_GETTING_STARTED.md) | Full local setup walkthrough |
 | [TESTING.md](docs/TESTING.md) | Test strategy, what's covered and what isn't |
 | [DECISION_LOG.md](docs/DECISION_LOG.md) | Why each technology was chosen |
+| [USER_STORIES.md](docs/USER_STORIES.md) | What each persona needs, mapped to the code that delivers it |
 
 ## 🗂️ Project Structure
 
@@ -88,6 +92,7 @@ src/
     checkpoint.ts               # Persists resume token to MongoDB (pod-restart safe)
     wsServer.ts                 # WebSocket connection manager + broadcast
     metrics.ts                  # Rolling stats, lag, type distribution
+    tracing.ts                  # OpenTelemetry SDK bootstrap + wide-span helpers
 
   health.routes.ts              # GET /healthz — MongoDB ping for k3s probes
 
@@ -162,6 +167,11 @@ k3s/
 - [x] Namespace, ConfigMap, Secret template, server Deployment+Service, worker Deployment
 - [x] Worker runs `replicas: 2` (Competing Consumers — safe with idempotent inserts)
 
+### ✅ Phase 15 — Distributed Tracing (OpenTelemetry)
+- [x] `src/observation/tracing.ts` — OTel SDK bootstrap, OTLP/HTTP exporter
+- [x] Wide spans on all four planes — `event.process` (worker), `event.observe` (server)
+- [x] W3C trace context propagated across the RabbitMQ boundary; parse-failure span events
+
 ## 🚀 Quick Start
 
 ```bash
@@ -178,12 +188,18 @@ npm install
 # 4. Start server
 npm run dev
 
-# 5. In a separate terminal, generate fake events
+# 5. In a separate terminal, start the worker (consumes + processes events)
+npm run worker
+
+# 6. In a third terminal, generate fake events
 npm run seed -- --rate=2 --type=all
 
-# 6. Open dashboard
+# 7. Open dashboard
 open http://localhost:3000/dashboard
 ```
+
+> Distributed tracing is optional — point `OTEL_EXPORTER_OTLP_ENDPOINT` at a running
+> OTel Collector to see traces. The SDK no-ops silently if no collector is reachable.
 
 ## 📦 npm Scripts
 
@@ -207,3 +223,22 @@ open http://localhost:3000/dashboard
 - Typed async iterators (MongoDB change streams as `AsyncIterable`)
 - Typed AMQP message payloads across publish/consume boundary
 - Strict null safety across async flows
+
+## 📋 Documentation Status
+
+Each doc carries a stamp under its title: **Last updated** (last content edit) and
+**Verified against `src/`** (last time its claims were checked against the code). Maintained
+by hand — bump both dates when you touch a doc, and bump "Verified" after auditing it against
+the source.
+
+| Doc | Last updated | Verified vs `src/` |
+|---|---|---|
+| [README.md](README.md) | 2026-06-14 | 2026-06-14 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 2026-06-14 | 2026-06-14 |
+| [docs/SERVICES.md](docs/SERVICES.md) | 2026-06-14 | 2026-06-14 |
+| [docs/API.md](docs/API.md) | 2026-06-14 | 2026-06-14 |
+| [docs/DEV_GETTING_STARTED.md](docs/DEV_GETTING_STARTED.md) | 2026-06-14 | 2026-06-14 |
+| [docs/TESTING.md](docs/TESTING.md) | 2026-06-14 | 2026-06-14 |
+| [docs/DECISION_LOG.md](docs/DECISION_LOG.md) | 2026-06-14 | 2026-06-14 |
+| [docs/USER_STORIES.md](docs/USER_STORIES.md) | 2026-06-14 | 2026-06-14 |
+| [docs/diagrams/OVERVIEW.md](docs/diagrams/OVERVIEW.md) | 2026-06-14 | 2026-06-14 |

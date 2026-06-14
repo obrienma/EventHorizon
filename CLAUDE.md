@@ -92,7 +92,7 @@ Queue depth thresholds: `QUEUE_DEPTH_WARNING` (default 50) → yellow, `QUEUE_DE
 
 All vars in `.env.example`. Validated via Zod in `src/config.ts` — process exits on startup if any are missing/invalid.
 
-Key vars: `MONGO_URI`, `MONGO_DB_NAME`, `RABBITMQ_URL`, `EXCHANGE_NAME`, `QUEUE_NAME`, `DEAD_LETTER_QUEUE`, `WORKER_PREFETCH`, `QUEUE_DEPTH_WARNING`, `QUEUE_DEPTH_CRITICAL`, `STATS_PUSH_INTERVAL_MS`.
+Key vars: `MONGO_URI`, `MONGO_DB_NAME`, `RABBITMQ_URL`, `RABBITMQ_MANAGEMENT_URL`, `EXCHANGE_NAME`, `QUEUE_NAME`, `DEAD_LETTER_QUEUE`, `WORKER_PREFETCH`, `QUEUE_DEPTH_WARNING`, `QUEUE_DEPTH_CRITICAL`, `STATS_PUSH_INTERVAL_MS`, `METRICS_RATE_WINDOW_MS`, `EVENT_DISTRIBUTION_POLL_MS`, `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 ---
 
@@ -125,6 +125,18 @@ npm run typecheck    # tsc --noEmit
 ## Detailed Documentation
 
 See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TESTING.md, DECISION_LOG.md, diagrams/OVERVIEW.md.
+
+---
+
+## Journal
+
+Engineering journal entries live in `docs/journal.md` — one `## Phase N — <Name> — YYYY-MM-DD` block per phase, with a `Files:` line and `### Pattern:`, `### Anti-Pattern Avoided:`, `### Challenge:`, `### Decision:` sections written as declarative prose (no Q:/A: blocks).
+
+Spaced-repetition probes (Cloze, Basic, and Image Occlusion cards) live in `docs/probes/phase-N-<name>.md`, one file per phase block, deck `Rhizome::EventHorizon`. Each probe's `See:` field links back to its `docs/journal.md#phase-N-<name>` anchor.
+
+Entries that touch the integration boundary with `~/dev/rhizome-observability` carry a `cross-ref: observability` marker (in both the journal heading and the corresponding probe frontmatter).
+
+`LEARNING_LOG.md` has been migrated and superseded by `docs/journal.md` + `docs/probes/`.
 
 ---
 
@@ -165,7 +177,7 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 - **Commit after each logical step** — the user commits manually; don't push.
 - **Don't add features beyond what's asked.** No extra error handling, no extra abstractions, no unrequested refactors.
 - **No doc files** unless explicitly requested. Update `CLAUDE.md` Build Status section after each completed step.
-- **Maintain `LEARNING_LOG.md`**: After each phase, append new entries for every pattern used, anti-pattern avoided, challenge encountered, or design decision made. Use the established entry format (Pattern / Anti-Pattern / Challenge / Decision sections with **Q:**/**A:** flashcard blocks).
+- **Maintain `docs/journal.md`**: After each phase, append a new `## Phase N — <Name> — YYYY-MM-DD` block with `### Pattern:`, `### Anti-Pattern Avoided:`, `### Challenge:`, `### Decision:` sections in declarative prose. Add corresponding spaced-repetition cards to `docs/probes/phase-N-<name>.md` (see Journal section above).
 - TypeScript strict mode means all nullable paths must be handled — don't use `!` non-null assertions unless provably safe.
 - ESM (`"type": "module"`) — all imports need explicit `.js` extensions when importing local files (TypeScript resolves `.ts` → `.js` at runtime with NodeNext).
 - Update the Build Status section in this file after each completed step.
