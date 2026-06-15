@@ -62,7 +62,7 @@ EventHorizon is fully instrumented with OpenTelemetry — every event emits trac
 - **Failures the response can't show.** Events are processed after the request comes back, so a request can succeed and still fail later — those failures are tracked too, never hidden.
 - **Fault injection for demos.** Optional flags inject real errors so the dashboard's error panels have realistic traffic to show — off by default.
 
-<img width="1326" height="842" alt="Screenshot 2026-06-15 085033" src="https://github.com/user-attachments/assets/efca39d0-254b-4043-9b05-d26424a2467e" />
+<img width="1715" height="1226" alt="Screenshot 2026-06-15 121348" src="https://github.com/user-attachments/assets/0f2c032c-612b-431d-83b2-f493bf43588c" />
 
 ## 📚 Docs
 
