@@ -55,12 +55,12 @@ flowchart LR
 
 ## 🔭 Observability
 
-Every request is traced with OpenTelemetry — `NodeSDK` + `auto-instrumentations-node` export traces, metrics, and trace-correlated logs via OTLP to a [Tempo/Loki/Prometheus/Grafana stack](https://github.com/obrienma/rhizome-observability).
+EventHorizon is fully instrumented with OpenTelemetry — every event emits traces, metrics, and logs to a separate Grafana monitoring stack. In practice that means:
 
-- **Cross-process trace propagation**: a single trace follows one event across process boundaries — HTTP ingest (SERVER) → RabbitMQ publish (PRODUCER) → RabbitMQ consume (CONSUMER) → `event.process` (CONSUMER, with `event.type`/`classification`/`write.collection` attributes) — via W3C `traceparent` headers injected/extracted around the AMQP boundary.
-- **Live dashboard**: the "EventHorizon Service" Grafana dashboard shows request rate, 5xx error rate, p50/p95/p99 latency, MongoDB connection pool, Node.js event-loop lag, V8 heap, and a recent-traces table — all sourced from auto-instrumentation metrics and TraceQL, zero extra instrumentation code.
-- **Trace waterfall**: `Explore → Tempo → {resource.service.name="event-horizon"}` in Grafana shows the full four-span trace for any request.
-- **Fault injection (demo only)**: `CHAOS_ERROR_RATE` (server env var, default `0`) injects real 500s; `npm run seed -- --error-rate=0.1` sends events with an invalid `id` to trigger real 422s — both for exercising the dashboard's error-rate panels with realistic mixed-status traffic.
+- **One trace per event, end to end.** A single event is followed across the whole pipeline, even across process boundaries — so when something is slow or breaks, you can see exactly where.
+- **A live dashboard.** Service health and what the pipeline is doing, at a glance — and traces and logs are one click away for drill-down. Screenshot below.
+- **Failures the response can't show.** Events are processed after the request comes back, so a request can succeed and still fail later — those failures are tracked too, never hidden.
+- **Fault injection for demos.** Optional flags inject real errors so the dashboard's error panels have realistic traffic to show — off by default.
 
 <img width="1326" height="842" alt="Screenshot 2026-06-15 085033" src="https://github.com/user-attachments/assets/efca39d0-254b-4043-9b05-d26424a2467e" />
 
@@ -244,12 +244,13 @@ the source.
 
 | Doc | Last updated | Verified vs `src/` |
 |---|---|---|
-| [README.md](README.md) | 2026-06-14 | 2026-06-14 |
+| [README.md](README.md) | 2026-06-15 | 2026-06-14 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 2026-06-14 | 2026-06-14 |
 | [docs/SERVICES.md](docs/SERVICES.md) | 2026-06-14 | 2026-06-14 |
 | [docs/API.md](docs/API.md) | 2026-06-14 | 2026-06-14 |
 | [docs/DEV_GETTING_STARTED.md](docs/DEV_GETTING_STARTED.md) | 2026-06-14 | 2026-06-14 |
 | [docs/TESTING.md](docs/TESTING.md) | 2026-06-14 | 2026-06-14 |
 | [docs/DECISION_LOG.md](docs/DECISION_LOG.md) | 2026-06-14 | 2026-06-14 |
+| [docs/adr/](docs/adr/) | 2026-06-15  | - |
 | [docs/USER_STORIES.md](docs/USER_STORIES.md) | 2026-06-14 | 2026-06-14 |
 | [docs/diagrams/OVERVIEW.md](docs/diagrams/OVERVIEW.md) | 2026-06-14 | 2026-06-14 |
