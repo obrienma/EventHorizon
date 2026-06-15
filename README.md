@@ -1,6 +1,6 @@
 # EventHorizon
 
-_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
+_Last updated: 2026-06-15 · Verified against `src/`: 2026-06-14_
 
 EventHorizon is a **real-time event pipeline** — you send telemetry events in, they get validated, queued, processed, stored, and pushed live to a browser dashboard. All within a second or two of arriving.
 
@@ -61,6 +61,8 @@ Every request is traced with OpenTelemetry — `NodeSDK` + `auto-instrumentation
 - **Live dashboard**: the "EventHorizon Service" Grafana dashboard shows request rate, 5xx error rate, p50/p95/p99 latency, MongoDB connection pool, Node.js event-loop lag, V8 heap, and a recent-traces table — all sourced from auto-instrumentation metrics and TraceQL, zero extra instrumentation code.
 - **Trace waterfall**: `Explore → Tempo → {resource.service.name="event-horizon"}` in Grafana shows the full four-span trace for any request.
 - **Fault injection (demo only)**: `CHAOS_ERROR_RATE` (server env var, default `0`) injects real 500s; `npm run seed -- --error-rate=0.1` sends events with an invalid `id` to trigger real 422s — both for exercising the dashboard's error-rate panels with realistic mixed-status traffic.
+
+<img width="1326" height="842" alt="Screenshot 2026-06-15 085033" src="https://github.com/user-attachments/assets/efca39d0-254b-4043-9b05-d26424a2467e" />
 
 ## 📚 Docs
 
