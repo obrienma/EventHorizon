@@ -1,3 +1,4 @@
+import { metrics } from "@opentelemetry/api";
 import { getDb } from "../storage/db.js";
 import { EVENTS_COLLECTION } from "../storage/event.repository.js";
 import { config } from "../config.js";
@@ -32,6 +33,25 @@ import type { StatsPayload, StoredEvent, EventType, WsMessage } from "../ingesti
 
 const recentInsertTimestamps: number[] = [];
 let lastChangeStreamLagMs = 0;
+
+// ── OTel metric: change-stream delivery lag ─────────────────────────────────────
+// Pattern: Observable (Async) Gauge over a Push Counter
+// Lag is a point-in-time level, not an event to count — so we register an
+// ObservableGauge whose callback is polled by the metric reader on its export
+// interval and reports the latest lastChangeStreamLagMs. This avoids emitting a
+// measurement on every insert (which would be a histogram's job). Exported to
+// Prometheus as eventhorizon_change_stream_lag_milliseconds — the signal Grafana
+// otherwise has no instrument for (the change stream is invisible to HTTP/runtime
+// auto-instrumentation).
+const meter = metrics.getMeter("eventhorizon");
+meter
+  .createObservableGauge("eventhorizon.change_stream.lag", {
+    description: "Lag from MongoDB commit to change-stream delivery",
+    unit: "ms",
+  })
+  .addCallback((result) => {
+    result.observe(lastChangeStreamLagMs);
+  });
 
 // ── recordInsert ──────────────────────────────────────────────────────────────
 // Called by server.ts on every change stream delivery.

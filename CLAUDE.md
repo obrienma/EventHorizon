@@ -148,6 +148,8 @@ Entries that touch the integration boundary with `~/dev/rhizome-observability` c
 
 **Phase 17 (2026-06-14):** Added opt-in fault injection for dashboard demo traffic — `CHAOS_ERROR_RATE` (server, `config.ts`/`event.routes.ts`) throws after validation to produce real 500s; `--error-rate` (seed producer) sends a malformed `id` to trigger real 422s. Both default to 0 and are off unless explicitly set. Live-verified mixed 202/422/500 traffic in Tempo and Prometheus, and added a "Recent Traces" TraceQL table panel to the "EventHorizon Service" dashboard.
 
+**Phase 18 (2026-06-15):** Exported pipeline-internal signals as custom OTel instruments so Grafana (not just the in-app dashboard) can trend/alert on them — `events.processed` and `events.failed` Counters labeled by `event.type` (Prometheus `events_processed_total{event_type=…}` / `events_failed_total{event_type=…}`, in `worker.ts`; `events.failed` is the async-failure/dead-letter signal the HTTP 5xx panel can't see) and `eventhorizon.change_stream.lag` ObservableGauge (Prometheus `eventhorizon_change_stream_lag_milliseconds`, in `metrics.ts`). All reuse the env-configured `MeterProvider` (no new wiring); `queueDepth` is intentionally left to RabbitMQ's own exporter. Live-verified `events_processed_total` (25/35/36 split by type) and the lag gauge (0ms) in Prometheus. Refines ADR 0016 → ADR 0017. Also reframed `USER_STORIES.md` persona 4 (learner → Maintainer) and added observability/fault-injection stories.
+
 **Build order: top-down** (start at the entry point, add each layer as it's called)
 
 **Not yet implemented** (in order):

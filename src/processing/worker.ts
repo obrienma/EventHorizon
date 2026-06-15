@@ -1,6 +1,6 @@
 import "../observation/tracing.js"; // must be first — registers OTel hooks before any instrumented module loads
 import amqp from "amqplib";
-import { trace, context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { trace, context, propagation, metrics, SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { ZodError } from "zod";
 import { config } from "../config.js";
 import { EventSchema, type AppEvent } from "../ingestion/event.schema.js";
@@ -13,6 +13,26 @@ import { saveEvent, saveFailedEvent, ensureIndexes, EVENTS_COLLECTION } from "..
 
 const MAX_RETRIES = 3;
 const tracer = trace.getTracer("event-horizon-worker", "1.0.0");
+
+// Pattern: Aggregate Metric vs. Per-Operation Span (refines ADR 0016/0017)
+// Per-event detail lives on the span (event.id, classification, write.collection).
+// This Counter is the aggregate, rate-able signal Grafana needs: exported to
+// Prometheus as events_processed_total{event_type="..."}, so per-type throughput
+// is a sum()/rate() query rather than a trace search. Mirrors the in-app
+// dashboard's eventTypeDistribution without coupling Grafana to the WebSocket.
+const meter = metrics.getMeter("eventhorizon");
+const processedCounter = meter.createCounter("events.processed", {
+  description: "Events successfully processed and stored, labeled by event type",
+});
+// Companion failure counter on the dead-letter path. Exported as
+// events_failed_total{event_type="..."} — an always-on, sampling-independent
+// async-failure signal that the HTTP 5xx panel cannot see (the 500 surface ends
+// at the 202; this fires after retries are exhausted). Parse failures have no
+// parsed event, so the label falls back to a bounded "unknown" (keeps the label
+// set closed per ADR 0017).
+const failedCounter = meter.createCounter("events.failed", {
+  description: "Events dead-lettered after exhausting retries, labeled by event type",
+});
 
 // ── startWorker ───────────────────────────────────────────────────────────────
 // Pattern: Competing Consumers
@@ -127,6 +147,7 @@ export async function startWorker(): Promise<() => Promise<void>> {
           });
 
           await saveEvent(event, { ...enriched, ...classified });
+          processedCounter.add(1, { "event.type": event.type });
           span.setStatus({ code: SpanStatusCode.OK });
           console.log(
             `[worker] processed ${event.type} event ${event.id}`,
@@ -180,6 +201,7 @@ export async function startWorker(): Promise<() => Promise<void>> {
             // Exhausted retries — nack without requeue → DLX routes to events.dead.
             // At-least-once delivery guarantee is preserved: we never silently drop.
             console.error(`[worker] dead-lettering message ${msg.properties.messageId ?? "(no id)"} after ${MAX_RETRIES} retries`);
+            failedCounter.add(1, { "event.type": event?.type ?? "unknown" });
             // Best-effort: record the failed event in MongoDB for observability.
             // Wrapped in .catch() so a MongoDB failure never blocks the nack.
             if (event !== undefined) {
