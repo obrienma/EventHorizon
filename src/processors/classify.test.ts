@@ -2,7 +2,11 @@ import { describe, it, expect } from "vitest";
 import { classify } from "./classify.js";
 import type { AppEvent } from "../ingestion/event.schema.js";
 
-function makeEvent(overrides: Omit<AppEvent, "id" | "timestamp">): AppEvent {
+// Omit over a discriminated union collapses the type↔payload correlation, so it
+// must be distributed across the union members to keep each variant intact.
+type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+
+function makeEvent(overrides: DistributiveOmit<AppEvent, "id" | "timestamp">): AppEvent {
   return {
     id: "00000000-0000-0000-0000-000000000001",
     timestamp: "2026-01-01T00:00:00.000Z",

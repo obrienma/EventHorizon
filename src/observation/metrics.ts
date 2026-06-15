@@ -77,7 +77,11 @@ export function recordInsert(doc: StoredEvent): void {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function computeRatePerSec(): number {
-  // TODO: implement this
+  // Filter at read time too — recordInsert only prunes on insert, so without this
+  // a stalled stream would report a stale-high rate until the next delivery.
+  const cutoff = Date.now() - config.METRICS_RATE_WINDOW_MS;
+  const withinWindow = recentInsertTimestamps.filter((t) => t >= cutoff).length;
+  return withinWindow / (config.METRICS_RATE_WINDOW_MS / 1000);
 }
 
 function queueDepthStatus(depth: number): "ok" | "warning" | "critical" {

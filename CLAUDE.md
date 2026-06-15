@@ -150,6 +150,8 @@ Entries that touch the integration boundary with `~/dev/rhizome-observability` c
 
 **Phase 18 (2026-06-15):** Exported pipeline-internal signals as custom OTel instruments so Grafana (not just the in-app dashboard) can trend/alert on them — `events.processed` and `events.failed` Counters labeled by `event.type` (Prometheus `events_processed_total{event_type=…}` / `events_failed_total{event_type=…}`, in `worker.ts`; `events.failed` is the async-failure/dead-letter signal the HTTP 5xx panel can't see) and `eventhorizon.change_stream.lag` ObservableGauge (Prometheus `eventhorizon_change_stream_lag_milliseconds`, in `metrics.ts`). All reuse the env-configured `MeterProvider` (no new wiring); `queueDepth` is intentionally left to RabbitMQ's own exporter. Live-verified `events_processed_total` (25/35/36 split by type) and the lag gauge (0ms) in Prometheus. Refines ADR 0016 → ADR 0017. Also reframed `USER_STORIES.md` persona 4 (learner → Maintainer) and added observability/fault-injection stories.
 
+**Phase 19 (2026-06-15):** Filled the intentional-friction TODO stubs that left 9 tests red — `classify.ts` (pipeline/sensor branches), `computeRatePerSec` in `metrics.ts` (read-time-filtered sliding window), and `saveEvent` in `event.repository.ts` (idempotent `insertOne` with `11000` swallow, mirroring `saveFailedEvent`). Also fixed the `classify.test.ts` `makeEvent` helper with a `DistributiveOmit` (plain `Omit` doesn't distribute over a discriminated union). Suite now 44/44 green; `tsc --noEmit` clean.
+
 **Build order: top-down** (start at the entry point, add each layer as it's called)
 
 **Not yet implemented** (in order):

@@ -32,9 +32,15 @@ export async function saveEvent(
   };
 
   try {
-    // TODO: implement this
+    await getDb().collection(EVENTS_COLLECTION).insertOne(doc);
   } catch (err) {
-    // TODO: implement this
+    // Idempotent Receiver: a duplicate { "raw.id" } means this event was already
+    // stored on a prior delivery — silently ignore. Any other write error is real
+    // and must propagate so the worker does not ack a message it failed to persist.
+    if (err instanceof MongoServerError && err.code === 11000) {
+      return;
+    }
+    throw err;
   }
 }
 

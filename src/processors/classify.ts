@@ -18,10 +18,23 @@ export function classify(event: AppEvent): ClassifiedMeta {
 
   switch (event.type){
     case "pipeline":
-      // TODO: implement this
+      return {
+        classification: event.payload.status === "failed" ? "critical" : "normal",
+        tags: ["pipeline", event.payload.step, event.payload.status],
+      };
 
-    case "sensor":
-      // TODO: implement this
+    case "sensor": {
+      const { metric, value } = event.payload;
+      let classification: Classification = "normal";
+      if (metric === "temperature") {
+        if (value > 85) classification = "critical";
+        else if (value > 70) classification = "warning";
+      }
+      return {
+        classification,
+        tags: ["sensor", metric],
+      };
+    }
 
     case "app":
       return {
