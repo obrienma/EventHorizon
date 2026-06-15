@@ -1,6 +1,6 @@
 # User Stories
 
-_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
+_Last updated: 2026-06-15 · Verified against `src/`: 2026-06-15_
 
 EventHorizon is a learning vehicle — the telemetry domain is scaffolding for the
 distributed-systems plumbing. These stories frame that plumbing around the people who
@@ -13,7 +13,25 @@ Personas:
 1. **Event/API integrator** — a service or script that emits telemetry into the pipeline.
 2. **Dashboard viewer / on-call operator** — a human watching the live system.
 3. **Platform engineer** — whoever builds, deploys, and scales EventHorizon.
-4. **Backend developer / learner** — the person studying the patterns the project demonstrates.
+4. **Maintainer** — whoever evolves, audits, and operates the codebase over time.
+
+---
+
+## Observability surfaces
+
+EventHorizon is observed through two **deliberately distinct** surfaces — not a
+duplicated one. Where they overlap (rate, error count) they measure *different
+planes*: Grafana's RED metrics are ingest-side (HTTP, pre-`202`), while the in-app
+stats are storage/worker-side (async failures and change-stream delivery that
+happen after the `202`).
+
+- **In-app dashboard** (Observation Plane → WebSocket): a live operational
+  wall-board — the real-time per-event feed plus pipeline-internal stats
+  (`queueDepth`, `changeStreamLagMs`, `eventTypeDistribution`). Zero extra infra,
+  but ephemeral — no history, no alerting.
+- **Grafana** (`rhizome-observability`): historical, cross-service, alertable —
+  RED metrics, Node.js runtime health, distributed traces, and (via custom OTel
+  metrics) the same pipeline-internal signals for trend analysis and alerts.
 
 ---
 
@@ -74,6 +92,15 @@ Personas:
   **Satisfied by:** Processing Plane — `src/processing/worker.ts` (retry → DLQ);
   Observation Plane — `src/observation/metrics.ts`.
 
+- **As an operator, I want request rate, error rate, and latency percentiles in Grafana, so
+  that I can see ingest-side health and trends over time — not just the instantaneous state
+  the in-app dashboard shows.**
+  OpenTelemetry auto-instrumentation exports HTTP and runtime metrics over OTLP to the
+  shared stack, where the "EventHorizon Service" dashboard renders RED metrics and Node.js
+  runtime health.
+  **Satisfied by:** Observation Plane — `src/observation/tracing.ts` → OTLP →
+  Prometheus/Grafana (`rhizome-observability`).
+
 - **As an operator, I want the live feed to survive a brief database hiccup without me
   restarting anything, so that transient infrastructure blips don't create blind spots.**
   The change stream recovers from cursor errors with a persisted resume token and
@@ -119,35 +146,60 @@ Personas:
   **Satisfied by:** Observation Plane — `src/observation/tracing.ts`; context propagation in
   `src/processing/queue.ts` + `src/processing/worker.ts`; ADR 0015, 0016.
 
+- **As a platform engineer, I want EventHorizon's signals in the shared observability stack,
+  so that it's monitored alongside my other services rather than through a bespoke per-app
+  dashboard.**
+  Traces, metrics, and logs are exported over OTLP to a collector endpoint configured by
+  `OTEL_*` environment variables; the service identifies itself via `OTEL_SERVICE_NAME`.
+  **Satisfied by:** `src/observation/tracing.ts`; `OTEL_*` config in `src/config.ts`.
+
+- **As a platform engineer, I want to inject controlled faults on demand, so that I can
+  verify the observability surfaces actually reflect real 4xx/5xx and failure traffic before
+  relying on them.**
+  `CHAOS_ERROR_RATE` makes the server throw after validation to produce genuine 500s, and the
+  seed producer's `--error-rate` emits malformed ids to trigger genuine 422s; both default to
+  0 and are off unless explicitly set.
+  **Satisfied by:** Ingestion Plane — `src/config.ts`, `src/ingestion/event.routes.ts`;
+  `src/seed/producer.ts`.
+
 ---
 
-## 4. Backend developer / learner
+## 4. Maintainer
 
-> *The person the project is really for — studying the patterns, not the domain.*
+> *Whoever evolves, audits, and reasons about the system over time.*
 
-- **As a learner, I want to see at-least-once delivery and competing consumers in a real
-  broker, so that I understand the trade-offs rather than reading about them.**
-  RabbitMQ topology, prefetch, and `ack`-after-write are implemented explicitly rather than
-  hidden behind a job library.
+- **As a maintainer, I want at-least-once delivery and competing consumers implemented
+  explicitly against a real broker, so that the delivery guarantees are visible and auditable
+  rather than buried in a job library's defaults.**
+  RabbitMQ topology, prefetch, and `ack`-after-write are spelled out in code, so their
+  trade-offs can be reviewed and tuned directly.
   **Satisfied by:** Processing Plane — `src/processing/queue.ts`, `worker.ts`; ADR 0003.
 
-- **As a learner, I want retry and dead-lettering implemented by hand, so that I learn how
-  failure handling actually works at the AMQP level.**
+- **As a maintainer, I want retry and dead-lettering implemented by hand, so that the
+  failure-handling behavior is auditable and modifiable at the AMQP level rather than opaque.**
   Application-level `x-retry-count` (max 3) drives republish-or-dead-letter via a DLX.
   **Satisfied by:** Processing Plane — `src/processing/worker.ts`, `queue.ts`; ADR 0005.
 
-- **As a learner, I want one shared, schema-derived type to flow through every plane, so
-  that I see how a single contract keeps a multi-stage system coherent.**
+- **As a maintainer, I want one shared, schema-derived type to flow through every plane, so
+  that a contract change propagates coherently across the whole multi-stage system.**
   `AppEvent` is `z.infer<>`-derived from the Zod schema and imported by every plane; no
   plane defines its own event shape.
   **Satisfied by:** `src/ingestion/event.schema.ts`; ADR 0012.
 
-- **As a learner, I want to observe correct graceful-shutdown ordering, so that I understand
-  why the sequence prevents message loss.**
+- **As a maintainer, I want an explicit, ordered graceful-shutdown sequence, so that the
+  guarantee against message loss is verifiable rather than incidental.**
   Shutdown drains HTTP/WS, cancels the consumer, closes the change stream, then MongoDB,
   then the AMQP channel and connection — in that exact order.
   **Satisfied by:** `src/server.ts`, `src/processing/worker.ts`;
   [ARCHITECTURE.md](ARCHITECTURE.md#graceful-shutdown-sequence).
+
+- **As a maintainer, I want queue depth, change-stream lag, and per-type throughput available
+  as metrics, so that pipeline-internal health is alertable and historically queryable — not
+  only visible live in the in-app dashboard.**
+  Queue depth is scraped from RabbitMQ's own exporter; change-stream lag and per-type
+  throughput are emitted as custom OTel metrics from the pipeline itself.
+  **Satisfied by:** Observation Plane — custom OTel metrics in `src/observation/metrics.ts`
+  and `src/processing/worker.ts`; ADR 0017.
 
 ---
 
