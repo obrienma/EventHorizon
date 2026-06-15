@@ -22,7 +22,7 @@ export async function eventRoutes(app: FastifyInstance): Promise<void> {
       "event.id": result.data.id,
       "event.type": result.data.type,
       "event.source": result.data.source,
-      "payload.size_bytes": Buffer.byteLength(request.body as string),
+      "payload.size_bytes": Buffer.byteLength(JSON.stringify(request.body)),
     });
 
     // TODO: publishEvent can throw if RabbitMQ is unavailable — what HTTP status
