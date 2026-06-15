@@ -27,6 +27,11 @@ const DURATION_SEC = args["duration"] ? Number(args["duration"]) : null;
 const DRY_RUN = args["dry-run"] === "true";
 const BASE_URL = args["url"] ?? `http://localhost:${process.env.PORT ?? 3000}`;
 
+// Fraction (0-1) of events sent with a deliberately invalid `id`, triggering
+// the server's 422 validation-error path. Pair with the server's
+// CHAOS_ERROR_RATE env var (500s) for mixed-error dashboard visuals.
+const ERROR_RATE = Math.max(0, Math.min(1, Number(args["error-rate"] ?? 0)));
+
 const VALID_TYPES = ["pipeline", "sensor", "app", "all"];
 if (!VALID_TYPES.includes(TYPE)) {
   console.error(`[seed] invalid --type="${TYPE}". Must be: pipeline | sensor | app | all`);
@@ -99,13 +104,19 @@ function makeEvent() {
   return makeAppEvent();
 }
 
+// Otherwise-valid event with a malformed `id`, so it fails Zod's `.uuid()`
+// check and the server returns 422.
+function makeInvalidEvent() {
+  return { ...makeEvent(), id: "not-a-uuid" };
+}
+
 // ── Send ──────────────────────────────────────────────────────────────────────
 
 let sent = 0;
 let failed = 0;
 
 async function send(): Promise<void> {
-  const event = makeEvent();
+  const event = Math.random() < ERROR_RATE ? makeInvalidEvent() : makeEvent();
 
   if (DRY_RUN) {
     console.log("[seed] dry-run:", JSON.stringify(event));
@@ -146,7 +157,7 @@ function printSummary(): void {
 }
 
 console.log(
-  `[seed] starting — rate: ${RATE}/s, type: ${TYPE}${DURATION_SEC ? `, duration: ${DURATION_SEC}s` : ""}${DRY_RUN ? ", dry-run" : ""}`,
+  `[seed] starting — rate: ${RATE}/s, type: ${TYPE}${DURATION_SEC ? `, duration: ${DURATION_SEC}s` : ""}${ERROR_RATE > 0 ? `, error-rate: ${ERROR_RATE}` : ""}${DRY_RUN ? ", dry-run" : ""}`,
 );
 
 const interval = setInterval(() => { void send(); }, Math.floor(1000 / RATE));

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { trace } from "@opentelemetry/api";
 import { EventSchema } from "./event.schema.js";
 import { publishEvent } from "../processing/queue.js";
+import { config } from "../config.js";
 
 export async function eventRoutes(app: FastifyInstance): Promise<void> {
   app.post("/events", async (request, reply) => {
@@ -24,6 +25,11 @@ export async function eventRoutes(app: FastifyInstance): Promise<void> {
       "event.source": result.data.source,
       "payload.size_bytes": Buffer.byteLength(JSON.stringify(request.body)),
     });
+
+    // Fault injection for dashboard/demo purposes — see CHAOS_ERROR_RATE in config.ts.
+    if (config.CHAOS_ERROR_RATE > 0 && Math.random() < config.CHAOS_ERROR_RATE) {
+      throw new Error("Chaos: simulated downstream failure");
+    }
 
     // TODO: publishEvent can throw if RabbitMQ is unavailable — what HTTP status
     // is appropriate here? Should the ingestion plane return 503, or let the

@@ -144,6 +144,10 @@ Entries that touch the integration boundary with `~/dev/rhizome-observability` c
 
 **Completed:** project scaffold, tsconfig, docker-compose, .env, vitest config, README, all docs, copilot-instructions.md, CLAUDE.md, `src/config.ts`, `src/ingestion/event.schema.ts`, `src/global.d.ts`, `src/server.ts`, `src/ingestion/event.routes.ts`, `src/processing/queue.ts`, `src/processing/worker.ts`, `src/processors/enrich.ts`, `src/processors/classify.ts`, `src/storage/db.ts`, `src/storage/event.repository.ts`, `src/observation/changeStream.ts`, `src/observation/wsServer.ts`, `src/observation/metrics.ts`, `src/observation/checkpoint.ts`, `src/observation/tracing.ts` (OTel Phase 3 — wide spans on all four pipeline stages, RabbitMQ context propagation, parse-failure span events).
 
+**Phase 16 (2026-06-14):** Live-validated the full OTel pipeline against the `rhizome-observability` stack (Tempo/Loki/Prometheus/Grafana). Fixed a `Buffer.byteLength` bug in `event.routes.ts` that was masked by optional-chaining short-circuit in `app.inject()` tests (`a9e2e4a`). Built the "EventHorizon Service" Grafana dashboard (RED metrics + Node.js runtime health) entirely from existing auto-instrumentation metrics — no new instrumentation code.
+
+**Phase 17 (2026-06-14):** Added opt-in fault injection for dashboard demo traffic — `CHAOS_ERROR_RATE` (server, `config.ts`/`event.routes.ts`) throws after validation to produce real 500s; `--error-rate` (seed producer) sends a malformed `id` to trigger real 422s. Both default to 0 and are off unless explicitly set. Live-verified mixed 202/422/500 traffic in Tempo and Prometheus, and added a "Recent Traces" TraceQL table panel to the "EventHorizon Service" dashboard.
+
 **Build order: top-down** (start at the entry point, add each layer as it's called)
 
 **Not yet implemented** (in order):

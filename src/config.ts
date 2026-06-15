@@ -28,6 +28,9 @@ const ConfigSchema = z.object({
   STATS_PUSH_INTERVAL_MS: z.coerce.number().int().min(100).default(5_000),
   METRICS_RATE_WINDOW_MS: z.coerce.number().int().min(100).default(10_000),
   EVENT_DISTRIBUTION_POLL_MS: z.coerce.number().int().min(100).default(10_000),
+
+  // Fault injection (dashboard/demo use only — 0 disables)
+  CHAOS_ERROR_RATE: z.coerce.number().min(0).max(1).default(0),
 });
 
 const result = ConfigSchema.safeParse(process.env);

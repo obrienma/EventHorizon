@@ -959,3 +959,49 @@ const parentCtx = propagation.extract(context.active(), carrier);
 This preserves `traceparent` (a string) and discards `x-retry-count` (a Buffer). The retry count is read separately from the raw `msgHeaders` object before this filter runs — both concerns are satisfied without interfering.
 
 If the unfiltered headers were passed to `propagation.extract()`, the W3C TraceContext propagator's type check on `headers["traceparent"]` would fail (it's a Buffer, not a string), and extraction would silently return the root (empty) context — the incoming trace orphaned with no error thrown. The span would start as a new root trace instead of continuing the publisher's trace, visible in Tempo as disconnected traces instead of a single parent/child waterfall.
+
+---
+
+## Phase 16 — Live OTel Validation — 2026-06-14
+
+cross-ref: observability
+Files: src/ingestion/event.routes.ts
+
+### Pattern: Optional Chaining Short-Circuits Its Entire Argument Tree
+
+`event.routes.ts` called `span?.setAttributes({ "payload.size_bytes": Buffer.byteLength(request.body as string) })`. `request.body` is a parsed object (Fastify's JSON body parser), not a string, so `Buffer.byteLength()` throws `ERR_INVALID_ARG_TYPE` on every call. Yet `npm test` (44/44) never caught it. The reason: `span?.setAttributes(...)` is an *optional* call — when `span` is `undefined`, the optional-chaining operator short-circuits the entire expression, including evaluation of its arguments. `Buffer.byteLength(...)` is never invoked, never throws. The fix is `JSON.stringify(request.body)` before measuring byte length.
+
+---
+
+### Challenge: A Fully-Passing Test Suite Coexisted With a 500 on Every Real Request
+
+In `app.inject()` tests there is no live OTel SDK and no active span — `trace.getActiveSpan()` returns `undefined` (Phase 15's Noop fallback), so `span?.setAttributes(...)` never evaluates its buggy argument. Under `npm run dev` with the real `NodeSDK` running and Fastify's HTTP auto-instrumentation creating a real SERVER span for every request, the same line threw on 100% of `POST /events` calls, returning 500 — the seed producer reported `sent: 0, failed: 8`. The bug was invisible to the test suite by construction, not by oversight, and was discovered only by running the full pipeline against a live OTel Collector (`rhizome-observability`) and watching real traffic 500 out.
+
+---
+
+### Decision: Fix Live-Discovered Bugs Immediately, Even Mid-Validation-Pass
+
+The bug surfaced while validating Phase 15's "definition of done" against the live rhizome-observability stack — a verification activity, not new feature work. It was fixed on the spot (`a9e2e4a`) rather than logged as a follow-up, because a non-functional ingest endpoint made every other verification step (trace propagation, log correlation, metrics scrape) untestable. Phase boundaries are for *planned* work; a bug that blocks the thing currently being validated gets fixed on discovery.
+
+---
+
+### Decision: Service Dashboard Built From Existing Auto-Instrumentation Metrics — No New Instrumentation Code
+
+The "EventHorizon Service" Grafana dashboard (`rhizome-observability/grafana/provisioning/dashboards/eventhorizon-service.json`) — request rate by status code, 5xx error rate, p50/p95/p99 latency, MongoDB connection pool, Node.js event-loop lag, V8 heap, and trace-correlated logs — uses only metrics `auto-instrumentations-node` already exports (`http_server_duration_milliseconds_*`, `db_client_connections_usage`, `nodejs_eventloop_delay_*`, `v8js_memory_heap_used_bytes`). Zero EventHorizon code changes were needed. This is deliberately a Prometheus/RED dashboard, not the TraceQL/wide-span business dashboard the migration plan's Phase 5 envisions (queries over `event.type`/`classification` attributes) — that remains deferred to full Phase 5, per the plan's anti-goal against pre-aggregating business attributes into Prometheus counters. This dashboard answers "is the service healthy"; "what is the service doing" is answered by the Tempo trace waterfall (`Explore → Tempo → {resource.service.name="event-horizon"}`), not by this dashboard.
+
+---
+
+## Phase 17 — Fault Injection for Dashboard Visuals — 2026-06-14
+
+cross-ref: observability
+Files: src/config.ts, .env.example, src/ingestion/event.routes.ts, src/seed/producer.ts
+
+### Pattern: Opt-In Fault Injection Behind a Default-Zero Rate
+
+Two independent knobs were added to produce mixed-status traffic for the "EventHorizon Service" dashboard's error-rate panels: `CHAOS_ERROR_RATE` (server, `src/config.ts`/`event.routes.ts`) throws after validation succeeds, producing real 500s and OTel ERROR-status spans; `--error-rate` (seed producer, `src/seed/producer.ts`) sends an otherwise-valid event with `id: "not-a-uuid"`, failing `EventSchema`'s `.uuid()` check and producing real 422s. Both default to `0` and are checked with `Math.random() < rate`. At `rate = 0`, the comparison is always false, so the branch is provably unreachable — `npm test` (`event.routes.test.ts`, 3/3) and normal `npm run dev` traffic are byte-for-byte unchanged from before this phase.
+
+### Decision: Two Independent Knobs Instead of One Combined "Error Mode"
+
+A single `ERROR_RATE` covering both 4xx and 5xx would conflate two different failure domains: 422 is a client-side contract violation (server never starts processing), 500 is a server-side fault (after validation, before the response). Keeping them as separate env var (server) and CLI flag (producer) means each can be tuned independently — e.g. a high `--error-rate` with `CHAOS_ERROR_RATE=0` exercises only the validation path — and the server's chaos knob works against *any* client, not just the seed producer.
+
+cross-ref: observability — the live verification of this fault injection (Tempo `status=error` spans, Prometheus `http_status_code` series for 422/500/202, and the new "Recent Traces" TraceQL panel) is logged in `rhizome-observability/LEARNING_LOG.md`, including two infra-side challenges hit along the way (a WSL2 crash from heavy Grafana-container introspection, and a Grafana 11.2.0 Tempo query-type limitation).

@@ -53,6 +53,15 @@ flowchart LR
     end
 ```
 
+## 🔭 Observability
+
+Every request is traced with OpenTelemetry — `NodeSDK` + `auto-instrumentations-node` export traces, metrics, and trace-correlated logs via OTLP to a [Tempo/Loki/Prometheus/Grafana stack](https://github.com/obrienma/rhizome-observability).
+
+- **Cross-process trace propagation**: a single trace follows one event across process boundaries — HTTP ingest (SERVER) → RabbitMQ publish (PRODUCER) → RabbitMQ consume (CONSUMER) → `event.process` (CONSUMER, with `event.type`/`classification`/`write.collection` attributes) — via W3C `traceparent` headers injected/extracted around the AMQP boundary.
+- **Live dashboard**: the "EventHorizon Service" Grafana dashboard shows request rate, 5xx error rate, p50/p95/p99 latency, MongoDB connection pool, Node.js event-loop lag, V8 heap, and a recent-traces table — all sourced from auto-instrumentation metrics and TraceQL, zero extra instrumentation code.
+- **Trace waterfall**: `Explore → Tempo → {resource.service.name="event-horizon"}` in Grafana shows the full four-span trace for any request.
+- **Fault injection (demo only)**: `CHAOS_ERROR_RATE` (server env var, default `0`) injects real 500s; `npm run seed -- --error-rate=0.1` sends events with an invalid `id` to trigger real 422s — both for exercising the dashboard's error-rate panels with realistic mixed-status traffic.
+
 ## 📚 Docs
 
 | File | Contents |
