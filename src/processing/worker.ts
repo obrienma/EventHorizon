@@ -25,13 +25,15 @@ const processedCounter = meter.createCounter("events.processed", {
   description: "Events successfully processed and stored, labeled by event type",
 });
 // Companion failure counter on the dead-letter path. Exported as
-// events_failed_total{event_type="..."} — an always-on, sampling-independent
-// async-failure signal that the HTTP 5xx panel cannot see (the 500 surface ends
-// at the 202; this fires after retries are exhausted). Parse failures have no
-// parsed event, so the label falls back to a bounded "unknown" (keeps the label
-// set closed per ADR 0017).
+// events_failed_total{event_type="...", failure_reason="..."} — an always-on,
+// sampling-independent async-failure signal that the HTTP 5xx panel cannot see
+// (the 500 surface ends at the 202; this fires after retries are exhausted).
+// Parse failures have no parsed event, so event_type falls back to a bounded
+// "unknown"; failure_reason (parse_error|schema_error|processing_error) is the
+// more useful dimension for failures since the dominant mode has no type. Both
+// label sets are closed and small, per ADR 0017.
 const failedCounter = meter.createCounter("events.failed", {
-  description: "Events dead-lettered after exhausting retries, labeled by event type",
+  description: "Events dead-lettered after exhausting retries, labeled by event type and failure reason",
 });
 
 // ── startWorker ───────────────────────────────────────────────────────────────
@@ -201,7 +203,14 @@ export async function startWorker(): Promise<() => Promise<void>> {
             // Exhausted retries — nack without requeue → DLX routes to events.dead.
             // At-least-once delivery guarantee is preserved: we never silently drop.
             console.error(`[worker] dead-lettering message ${msg.properties.messageId ?? "(no id)"} after ${MAX_RETRIES} retries`);
-            failedCounter.add(1, { "event.type": event?.type ?? "unknown" });
+            // For failures, *why* is more useful than *what type* — the dominant
+            // failure mode (poison/parse) has no event.type at all. Classify the
+            // final error into a closed, bounded set so it stays ADR-0017-safe.
+            const reason =
+              err instanceof SyntaxError ? "parse_error" :
+              err instanceof ZodError ? "schema_error" :
+              "processing_error";
+            failedCounter.add(1, { "event.type": event?.type ?? "unknown", "failure.reason": reason });
             // Best-effort: record the failed event in MongoDB for observability.
             // Wrapped in .catch() so a MongoDB failure never blocks the nack.
             if (event !== undefined) {
