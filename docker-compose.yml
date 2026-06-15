@@ -25,6 +25,7 @@ services:
     ports:
       - "5672:5672"   # AMQP protocol
       - "15672:15672" # Management UI → http://localhost:15672 (guest/guest)
+      - "15692:15692" # Prometheus metrics → http://localhost:15692/metrics (rabbitmq_prometheus, enabled by default in the management image)
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
