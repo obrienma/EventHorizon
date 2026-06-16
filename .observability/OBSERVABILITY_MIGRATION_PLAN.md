@@ -15,7 +15,7 @@ Unified observability across four services using OpenTelemetry as the signal lay
 1. `sentinel-l7` (Laravel/PHP) — compliance engine, consumes axioms from Redis Streams
 2. `EventHorizon` (TypeScript/Fastify) — four-stage telemetry pipeline over RabbitMQ + MongoDB
 3. `synapse-l4` (Python/FastAPI) — LLM validation sidecar, emits to Sentinel via Redis Streams
-4. `ruby-invoicer` (Ruby, name TBC) — invoicing against Sentinel customers
+4. `Ledger-L5` (Ruby/Rails) — invoicing against Sentinel customers (`~/dev/Ledger-L5`)
 
 ## Architecture target
 
@@ -23,7 +23,7 @@ Unified observability across four services using OpenTelemetry as the signal lay
 [synapse-l4] ──┐
 [sentinel-l7] ─┼─ OTLP → [otel-collector] ─┬→ Tempo  (traces)
 [EventHorizon]─┤                            ├→ Loki   (logs)
-[invoicer]   ──┘                            └→ Prometheus (metrics)
+[Ledger-L5]  ──┘                            └→ Prometheus (metrics)
                                               ↓
                                           [Grafana]
 ```
@@ -262,11 +262,21 @@ For each phase below:
 
 **STATUS: ✓ Complete** — SDK bootstrapped; RabbitMQ context propagation wired; wide spans on all four pipeline stages; parse-failure span events surfaced. 44 tests pass. Marker: `.observability/phase-3-complete`.
 
+**Post-completion extensions (EventHorizon project phases 16–19, 2026-06-14 → 06-15):**
+
+Phase 3's exit criteria (four-stage trace, span-event drops) were met with the NoopTracerProvider and no live backend. The following work hardened that against the real `rhizome-observability` stack and added the pipeline-internal signals the trace layer can't carry. These are EventHorizon-local follow-ups — they do **not** change the cross-service sequencing and Phase 4 (invoicer) remains the next plan phase.
+
+- **P16 — Live validation + bugfix + first dashboard.** Ran the full OTel pipeline against the live stack (Tempo/Loki/Prometheus/Grafana). Fixed a `Buffer.byteLength` bug in `event.routes.ts` that the `app.inject()` tests had masked via optional-chaining short-circuit (`a9e2e4a`). Built the "EventHorizon Service" Grafana dashboard (RED metrics + Node.js runtime health) **entirely from existing auto-instrumentation** — no new instrumentation code. This is the EventHorizon slice of Phase 5 landing early (see Phase 5 note).
+- **P17 — Fault injection for demo traffic.** Opt-in, both default 0 and off unless set: `CHAOS_ERROR_RATE` (server, `config.ts`/`event.routes.ts`) throws *after* validation to produce real 500s; `--error-rate` (seed producer) sends a malformed `id` to trigger real 422s. Live-verified mixed 202/422/500 in Tempo and Prometheus; added a "Recent Traces" TraceQL table panel to the dashboard.
+- **P18 — Custom metric instruments for pipeline-internal signals.** Three signals the RED/auto-instrumentation dashboard cannot see were exported via the env-configured `MeterProvider` (no new wiring in `tracing.ts`): `events.processed` Counter → `events_processed_total{event_type="pipeline|sensor|app"}` (worker ack path); `events.failed` Counter → `events_failed_total{event_type, failure_reason="parse_error|schema_error|processing_error"}` (worker retry-exhaustion path — the async-failure signal the HTTP 5xx panel can't see, and the *processing-failure subset* of dead-letters, not the total); and `eventhorizon.change_stream.lag` ObservableGauge → `eventhorizon_change_stream_lag_milliseconds`. `queueDepth` is **deliberately not** exported from EventHorizon — it comes from RabbitMQ's own `rabbitmq_prometheus` exporter so the broker stays the single source of truth. Governed by **ADR 0016 → ADR 0017** (see the refined anti-goal below). Live-verified: 25/35/36 processed-by-type split, lag gauge 0ms.
+
+**Cross-repo open item (belongs in `rhizome-observability`):** `docker-compose.yml` now publishes RabbitMQ's Prometheus port `15692` on the host (`cc05a81`). The matching **Prometheus scrape job for `rabbitmq_prometheus`** is the one remaining observability-repo step so Grafana can read `rabbitmq_queue_messages{queue="events.dead"}` (the total dead-letter signal that complements `events_failed_total`) and queue depth. EventHorizon's own custom metrics already reach Prometheus via the OTLP collector — no extra scrape job needed for those.
+
 ---
 
-## Phase 4 — Ruby invoicer
+## Phase 4 — Ledger-L5 (Ruby invoicer)
 
-**Repo:** TBC (likely `cyber-rhizome/invoicer` or similar)
+**Repo:** `Ledger-L5` (`~/dev/Ledger-L5`, Ruby/Rails)
 
 **Goal:** Invoicer is instrumented from day one. Any HTTP calls to Sentinel automatically propagate trace context, linking invoicing flows back to the underlying compliance events they bill against.
 
@@ -279,7 +289,7 @@ For each phase below:
 2. Configure in an initializer:
    ```ruby
    OpenTelemetry::SDK.configure do |c|
-     c.service_name = 'invoicer'
+     c.service_name = 'ledger-l5'
      c.use_all  # auto-instrument everything available
    end
    ```
@@ -289,7 +299,7 @@ For each phase below:
 **Definition of done:**
 
 - Generating a test invoice that queries Sentinel produces a trace spanning both services in Tempo.
-- The trace shows Ruby spans (invoicer.invoice.generate) → HTTP call → Sentinel spans (the existing compliance query handler).
+- The trace shows Ruby spans (ledger-l5 `invoice.generate`) → HTTP call → Sentinel spans (the existing compliance query handler).
 
 **Confidence flags:**
 
@@ -304,6 +314,8 @@ For each phase below:
 **Repos:** all four
 
 This phase is decorative compared to traces. The interview talking point is "distributed tracing across async boundaries in four languages" — that lives entirely in phases 0–4. Defer this phase until you have a concrete need (e.g. dashboard screenshots for portfolio site).
+
+**Partial early landing (EventHorizon):** the EventHorizon dashboard slice of this phase is already built — the "EventHorizon Service" Grafana dashboard (RED + Node.js runtime + a "Recent Traces" TraceQL panel + per-type throughput and change-stream-lag panels off the Phase-18 custom metrics). Pulling it forward was justified by the live-validation and fault-injection demo need (project phases 16–18); it does not unblock or reorder the remaining services. Logs-via-Loki and the other three services' dashboards remain deferred.
 
 When ready:
 
@@ -336,6 +348,7 @@ A portfolio-level architecture diagram showing the full system with trace flow a
 - Do not expand OTel instrumentation to cover every function — auto-instrumentation plus manual spans on business-critical operations is the right granularity. Adding spans for trivial helpers creates noise.
 - Do not silently replace Logfire with raw OTel in Synapse. Logfire IS OTel; keep it as an exporter option.
 - **Do not pre-aggregate business attributes into Prometheus counters.** `axioms_by_domain_total{domain="..."}`, `invoice_amount_by_customer_total{customer_id="..."}` — these belong as wide span attributes queryable via TraceQL, not as pre-committed metric dimensions. Prometheus counters are reserved for things that drive alerts (rates, error counts, queue depth). The discipline matters because once a Prometheus counter exists, people start querying it instead of the spans, and the wide-attribute story degrades over time.
+  - **Documented exception (EventHorizon, ADR 0016 → 0017):** `events_processed_total{event_type}` and `events_failed_total{event_type, failure_reason}` *are* sanctioned counters. They pass the refined test, not break the rule: `event.type` is a **closed three-value enum** (no cardinality commitment at write time), and they are **rate/SLO signals that must be sampling-independent** — a throughput rate or failure rate cannot be reconstructed from sampled traces. The discipline still binds open-ended dimensions (`source`, `id`, `customer_id`, `domain`): those stay span-only. Before adding any pipeline counter, apply the ADR-0017 test — *alert/SLO + sampling-independent + bounded label set → instrument; otherwise → span attribute.*
 
 ---
 

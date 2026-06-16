@@ -55,10 +55,10 @@ flowchart LR
 
 ## 🔭 Observability
 
-EventHorizon is fully instrumented with OpenTelemetry — every event emits traces, metrics, and logs to a separate Grafana monitoring stack. In practice that means:
+EventHorizon is instrumented with OpenTelemetry — every event emits traces and metrics to a separate Grafana monitoring stack. (Log shipping to Loki is a planned next step; for now logs stay on the console.) In practice that means:
 
 - **One trace per event, end to end.** A single event is followed across the whole pipeline, even across process boundaries — so when something is slow or breaks, you can see exactly where.
-- **A live dashboard.** Service health and what the pipeline is doing, at a glance — and traces and logs are one click away for drill-down. Screenshot below.
+- **A live dashboard.** Service health and what the pipeline is doing, at a glance — and the underlying traces are one click away for drill-down. Screenshot below.
 - **Failures the response can't show.** Events are processed after the request comes back, so a request can succeed and still fail later — those failures are tracked too, never hidden.
 - **Fault injection for demos.** Optional flags inject real errors so the dashboard's error panels have realistic traffic to show — off by default.
 
