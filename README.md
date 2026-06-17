@@ -33,14 +33,14 @@ flowchart LR
 ## 📋 Contents
 
 - [🧰 Stack](#-stack)
+- [🚀 Quick Start](#-quick-start)
 - [🏗️ Architecture Overview](#️-architecture-overview)
 - [🔭 Observability](#-observability)
-- [📚 Docs](#-docs)
-- [🗂️ Project Structure](#️-project-structure)
-- [🗺️ Roadmap](#️-roadmap)
-- [🚀 Quick Start](#-quick-start)
 - [📦 npm Scripts](#-npm-scripts)
 - [🧠 TS Patterns Demonstrated](#-ts-patterns-demonstrated)
+- [📚 Docs](#-docs)
+- [🗺️ Roadmap](#️-roadmap)
+- [🗂️ Project Structure](#️-project-structure)
 
 ## 🧰 Stack
 
@@ -55,7 +55,35 @@ flowchart LR
 | Observability | OpenTelemetry (traces + metrics) | Wide spans on all four planes, custom pipeline metrics, OTLP export |
 | Testing | Vitest + mongodb-memory-server | ESM-native, colocated tests |
 
+## 🚀 Quick Start
 
+```bash
+# 1. Start infrastructure
+npm run infra
+# MongoDB on :27017 | RabbitMQ on :5672 | Management UI on :15672 (guest/guest)
+
+# 2. Copy env
+cp .env.example .env
+
+# 3. Install deps
+npm install
+
+# 4. Start server
+npm run dev
+
+# 5. In a separate terminal, start the worker (consumes + processes events)
+npm run worker
+
+# 6. In a third terminal, generate fake events
+npm run seed -- --rate=2 --type=all
+
+# 7. Open dashboard
+open http://localhost:3000/dashboard
+
+```
+
+> Distributed tracing is optional — point `OTEL_EXPORTER_OTLP_ENDPOINT` at a running
+> OTel Collector to see traces. The SDK no-ops silently if no collector is reachable.
 
 ## 🏗️ Architecture Overview
 
@@ -83,10 +111,10 @@ flowchart LR
     C -->|enrich + classify| D
     D -->|change stream| F
 
-    click A "/src/ingestion/" "Go to Ingestion Source"
-    click C "/src/processing/" "Go to Processing Source"
-    click D "/src/storage/" "Go to Storage Source"
-    click F "/src/observation/" "Go to Observation Source"
+    click A "https://github.com/obrienma/EventHorizon/tree/master/src/ingestion/" "Go to Ingestion Source"
+    click C "https://github.com/obrienma/EventHorizon/tree/master/src/processing/" "Go to Processing Source"
+    click D "https://github.com/obrienma/EventHorizon/tree/master/src/storage/" "Go to Storage Source"
+    click F "https://github.com/obrienma/EventHorizon/tree/master/src/observation/" "Go to Observation Source"
 
     classDef clickable fill:#1d4ed8,stroke:#1e40af,stroke-width:2px,color:#ffffff
     class A,C,D,F clickable
@@ -101,8 +129,33 @@ The **built-in dashboard** (`/dashboard`) is a WebSocket-fed live event feed —
 * **Failures the response can't show.** Events are processed after the request comes back, so a request can succeed and still fail later — those failures are tracked too, never hidden.
 * **Fault injection for demos.** Optional flags inject real errors so the dashboard's error panels have realistic traffic to show — off by default.
 
-<p><em><span style="color: #f59e0b">Errors shown are synthetic — generated via opt-in fault injection for dashboard demo traffic.</span></em></p>
+> [!TIP]
+> Errors shown are synthetic — generated via opt-in fault injection for dashboard demo traffic.
+
 <img width="1715" height="1226" alt="Screenshot 2026-06-15 121348" src="https://github.com/user-attachments/assets/0f2c032c-612b-431d-83b2-f493bf43588c" />
+
+## 📦 npm Scripts
+
+| Script | Description |
+| --- | --- |
+| `npm run dev` | Start Fastify server with tsx |
+| `npm run worker` | Start RabbitMQ consumer worker |
+| `npm run seed` | Run fake event generator CLI |
+| `npm run infra` | `docker compose up -d` |
+| `npm run infra:down` | `docker compose down` |
+| `npm test` | Run Vitest suite |
+| `npm run test:watch` | Vitest in watch mode |
+| `npm run build` | Compile to `dist/` (production, no test files) |
+| `npm run typecheck` | `tsc --noEmit` |
+
+## 🧠 TS Patterns Demonstrated
+
+* Discriminated unions for event types (`pipeline` | `sensor` | `app`)
+* `z.infer<typeof Schema>` — no type duplication across layers
+* Generic repository pattern over MongoDB collections
+* Typed async iterators (MongoDB change streams as `AsyncIterable`)
+* Typed AMQP message payloads across publish/consume boundary
+* Strict null safety across async flows
 
 ## 📚 Docs
 
@@ -120,54 +173,6 @@ Each doc carries a **Last updated** date (last content edit) and a **Verified** 
 | [diagrams/OVERVIEW.md](docs/diagrams/OVERVIEW.md) | Architecture diagrams | 2026-06-14 | 2026-06-14 |
 | [adr/](docs/adr/) | Architecture Decision Records | 2026-06-17 | — |
 | [journal.md](docs/journal.md) | Engineering journal — one entry per phase | 2026-06-15 | — |
-
-## 🗂️ Project Structure
-
-```
-src/
-  config.ts                     # Env vars parsed/validated via Zod
-  server.ts                     # Fastify entry + graceful shutdown
-
-  ingestion/                    # ── Ingestion Plane ──
-    event.schema.ts             # Zod discriminated union + inferred types
-    event.routes.ts             # POST /events, GET /events, GET /events/:id
-
-  processing/                   # ── Processing Plane ──
-    queue.ts                    # RabbitMQ connection, exchange/queue setup
-    worker.ts                   # Consumer: ack/nack, retry, DLQ
-    processors/
-      enrich.ts                 # Add receivedAt, enrichedAt, source metadata
-      classify.ts               # Classify: normal | warning | critical
-
-  storage/                      # ── Storage Plane ──
-    db.ts                       # MongoDB client + connection
-    event.repository.ts         # Append-only repo, idempotent insert
-
-  observation/                  # ── Observation Plane ──
-    changeStream.ts             # Change stream with resume token + backoff
-    checkpoint.ts               # Persists resume token to MongoDB (pod-restart safe)
-    wsServer.ts                 # WebSocket connection manager + broadcast
-    metrics.ts                  # Rolling stats, lag, type distribution
-    tracing.ts                  # OpenTelemetry SDK bootstrap + wide-span helpers
-
-  health.routes.ts              # GET /healthz — MongoDB ping for k3s probes
-
-  dashboard/
-    index.html                  # Single-file live dashboard (vanilla JS)
-
-  seed/
-    producer.ts                 # CLI fake event generator
-
-k3s/
-  namespace.yaml
-  configmap.yaml
-  secret.yaml                   # Template — replace values before applying
-  server.yaml                   # Deployment + NodePort Service
-  worker.yaml                   # Deployment (replicas: 2, CMD override)
-
-```
-
-> **Architecture Scale Note:** Because the storage layer implements an idempotent repository layout, the `processing/` plane can safely scale horizontally (e.g., `replicas: 2` in k3s manifests via Competing Consumers pattern) with zero data corruption or duplication risk.
 
 ## 🗺️ Roadmap
 
@@ -233,10 +238,11 @@ k3s/
 * [x] `GET /healthz` — pings MongoDB; 200 ok / 503 degraded
 * [x] Wired to k3s liveness and readiness probes
 
-### ✅ Phase 14 — k3s Manifests
+### ✅ Phase 14 — Kubernetes Deployment (k3s)
 
-* [x] Namespace, ConfigMap, Secret template, server Deployment+Service, worker Deployment
-* [x] Worker runs `replicas: 2` (Competing Consumers — safe with idempotent inserts)
+* [x] Full Kubernetes manifest set — Namespace, ConfigMap, Secret template, server Deployment + NodePort Service, worker Deployment
+* [x] Worker runs `replicas: 2` — Competing Consumers pattern, safe because the storage layer's idempotent inserts absorb duplicate deliveries without data corruption
+* [x] k3s (lightweight Kubernetes distribution) chosen for local and edge deployment; manifests are standard Kubernetes and portable to any cluster
 
 ### ✅ Phase 15 — Distributed Tracing (OpenTelemetry)
 
@@ -250,56 +256,63 @@ k3s/
 * [x] Opt-in fault injection for demo traffic — off by default
 * [x] Custom OTel metrics for pipeline-internal signals — per-type processed/failed counters and change-stream lag
 
-## 🚀 Quick Start
+### ✅ Phase 19 — Test Suite Completion
 
-```bash
-# 1. Start infrastructure
-npm run infra
-# MongoDB on :27017 | RabbitMQ on :5672 | Management UI on :15672 (guest/guest)
+* [x] Filled intentional-friction TODO stubs — `classify.ts` pipeline/sensor branches, `computeRatePerSec` sliding window, `saveEvent` idempotent insert
+* [x] Fixed `classify.test.ts` `makeEvent` helper with `DistributiveOmit` (plain `Omit` doesn't distribute over discriminated unions)
+* [x] 44/44 tests green; `tsc --noEmit` clean
 
-# 2. Copy env
-cp .env.example .env
+### ⬜ Phase 20 — Log Shipping (Loki)
 
-# 3. Install deps
-npm install
+* [ ] Migrate `console.*` to structured pino logger
+* [ ] Export logs via OTLP → OTel Collector → Loki using `@opentelemetry/instrumentation-pino`
+* [ ] Logs queryable in Grafana alongside traces — correlate a trace ID directly to its log lines
 
-# 4. Start server
-npm run dev
+## 🗂️ Project Structure
 
-# 5. In a separate terminal, start the worker (consumes + processes events)
-npm run worker
+```
+src/
+  config.ts                     # Env vars parsed/validated via Zod
+  server.ts                     # Fastify entry + graceful shutdown
 
-# 6. In a third terminal, generate fake events
-npm run seed -- --rate=2 --type=all
+  ingestion/                    # ── Ingestion Plane ──
+    event.schema.ts             # Zod discriminated union + inferred types
+    event.routes.ts             # POST /events, GET /events, GET /events/:id
 
-# 7. Open dashboard
-open http://localhost:3000/dashboard
+  processing/                   # ── Processing Plane ──
+    queue.ts                    # RabbitMQ connection, exchange/queue setup
+    worker.ts                   # Consumer: ack/nack, retry, DLQ
+    processors/
+      enrich.ts                 # Add receivedAt, enrichedAt, source metadata
+      classify.ts               # Classify: normal | warning | critical
+
+  storage/                      # ── Storage Plane ──
+    db.ts                       # MongoDB client + connection
+    event.repository.ts         # Append-only repo, idempotent insert
+
+  observation/                  # ── Observation Plane ──
+    changeStream.ts             # Change stream with resume token + backoff
+    checkpoint.ts               # Persists resume token to MongoDB (pod-restart safe)
+    wsServer.ts                 # WebSocket connection manager + broadcast
+    metrics.ts                  # Rolling stats, lag, type distribution
+    tracing.ts                  # OpenTelemetry SDK bootstrap + wide-span helpers
+
+  health.routes.ts              # GET /healthz — MongoDB ping for k3s probes
+
+  dashboard/
+    index.html                  # Single-file live dashboard (vanilla JS)
+
+  seed/
+    producer.ts                 # CLI fake event generator
+
+k3s/
+  namespace.yaml
+  configmap.yaml
+  secret.yaml                   # Template — replace values before applying
+  server.yaml                   # Deployment + NodePort Service
+  worker.yaml                   # Deployment (replicas: 2, CMD override)
 
 ```
 
-> Distributed tracing is optional — point `OTEL_EXPORTER_OTLP_ENDPOINT` at a running
-> OTel Collector to see traces. The SDK no-ops silently if no collector is reachable.
-
-## 📦 npm Scripts
-
-| Script | Description |
-| --- | --- |
-| `npm run dev` | Start Fastify server with tsx |
-| `npm run worker` | Start RabbitMQ consumer worker |
-| `npm run seed` | Run fake event generator CLI |
-| `npm run infra` | `docker compose up -d` |
-| `npm run infra:down` | `docker compose down` |
-| `npm test` | Run Vitest suite |
-| `npm run test:watch` | Vitest in watch mode |
-| `npm run build` | Compile to `dist/` (production, no test files) |
-| `npm run typecheck` | `tsc --noEmit` |
-
-## 🧠 TS Patterns Demonstrated
-
-* Discriminated unions for event types (`pipeline` | `sensor` | `app`)
-* `z.infer<typeof Schema>` — no type duplication across layers
-* Generic repository pattern over MongoDB collections
-* Typed async iterators (MongoDB change streams as `AsyncIterable`)
-* Typed AMQP message payloads across publish/consume boundary
-* Strict null safety across async flows
+> **Architecture Scale Note:** Because the storage layer implements an idempotent repository layout, the `processing/` plane can safely scale horizontally (e.g., `replicas: 2` in k3s manifests via Competing Consumers pattern) with zero data corruption or duplication risk.
 
