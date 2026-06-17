@@ -37,3 +37,4 @@ The RabbitMQ Management UI at `localhost:15672` also provides free visual observ
 - Retry logic and dead-lettering are implemented explicitly in the worker — not provided by a library (see ADR 0005).
 - `amqplib` has quirks with ESM and top-level await: the library only exposes a CommonJS default export; it must be imported as `import amqp from "amqplib"` (default import, not named).
 - `channel.prefetch(N)` must be called before consuming to avoid unbounded message delivery (head-of-line blocking).
+- At production scale: replace the single-node broker with a RabbitMQ cluster using quorum queues, publisher confirms, and connection pooling.

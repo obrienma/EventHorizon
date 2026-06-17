@@ -1,6 +1,5 @@
 # EventHorizon — System Overview
 
-_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
 
 High-level Mermaid diagrams for quick reference.
 

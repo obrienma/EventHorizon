@@ -1,6 +1,5 @@
 # User Stories
 
-_Last updated: 2026-06-15 · Verified against `src/`: 2026-06-15_
 
 EventHorizon is a learning vehicle — the telemetry domain is scaffolding for the
 distributed-systems plumbing. These stories frame that plumbing around the people who

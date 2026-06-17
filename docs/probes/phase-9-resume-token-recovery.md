@@ -61,3 +61,25 @@ A: Updating the token first means that if the server crashes between the two lin
 
 Extra: EventHorizon · Phase 9 · Decision: Resume Token Updated Before Broadcast — At-Most-Once Observation Delivery
 See: docs/journal.md#phase-9-change-stream-resume-token-recovery
+
+---
+type: cloze
+deck: Rhizome::EventHorizon
+tags: [eventhorizon, phase-9, mongodb, change-streams]
+---
+MongoDB change streams work by tailing the `{{c1::oplog}}` — a rolling write-ahead log maintained for replication. This is fundamentally different from polling: polling repeatedly issues fresh `{{c2::find / countDocuments}}` queries, while a change stream holds a `{{c3::long-lived cursor}}` that MongoDB pushes new events into. No wasted round-trips; sub-millisecond delivery after each insert.
+
+Extra: EventHorizon · Phase 9 · Pattern: Change Stream as Oplog Tail (vs. Polling)
+See: docs/journal.md#phase-9-change-stream-resume-token-recovery
+
+---
+type: basic
+deck: Rhizome::EventHorizon
+tags: [eventhorizon, phase-9, mongodb, change-streams, testing]
+---
+Q: Change streams require a replica set and don't work on a standalone mongod. How does EventHorizon satisfy this in local dev, and what does it mean for the test suite?
+
+A: docker-compose.yml starts MongoDB with `--replSet rs0` and runs `rs.initiate()` on first boot to create a single-node replica set — enough for the oplog to exist and `.watch()` to work. In tests, `mongodb-memory-server` would need explicit replica set mode, which adds ~1–2s to startup per suite. The trade-off was accepted by not automating change stream tests at all — they're verified manually. This is the only automated-test gap in the project driven purely by infrastructure cost rather than code complexity.
+
+Extra: EventHorizon · Phase 9 · Challenge: Change Streams Require a Replica Set
+See: docs/journal.md#phase-9-change-stream-resume-token-recovery

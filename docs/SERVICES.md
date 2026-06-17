@@ -1,6 +1,5 @@
 # Services Reference
 
-_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
 
 Per-module breakdown of every file in `src/`. Each entry covers: purpose, key exports, external dependencies, and what to look for when debugging.
 

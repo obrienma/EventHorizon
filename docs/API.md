@@ -1,6 +1,5 @@
 # API Reference
 
-_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
 
 Base URL: `http://localhost:3000`
 

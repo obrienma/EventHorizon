@@ -1,6 +1,5 @@
 # Architecture
 
-_Last updated: 2026-06-14 · Verified against `src/`: 2026-06-14_
 
 EventHorizon is structured as four explicit **planes**, each with a single responsibility. The planes are one-directional: data flows inward through ingestion, down through processing and storage, and out through observation. Nothing flows backwards.
 
@@ -8,16 +7,16 @@ EventHorizon is structured as four explicit **planes**, each with a single respo
 
 ```mermaid
 flowchart TD
-    Producer["Seed Producer\n(CLI / HTTP client)"]
+    Producer["Seed Producer<br/>(CLI / HTTP client)"]
 
     subgraph IP ["Ingestion Plane"]
-        Route["POST /events\n(Fastify route)"]
-        Zod["Zod\ndiscriminated union\nvalidation"]
+        Route["POST /events<br/>(Fastify route)"]
+        Zod["Zod<br/>discriminated union<br/>validation"]
         Route --> Zod
     end
 
     subgraph MQ ["Message Broker"]
-        Exchange["RabbitMQ\nevents topic exchange"]
+        Exchange["RabbitMQ<br/>events topic exchange"]
         WorkQ["events.work queue"]
         DLX["Dead Letter Exchange"]
         DLXQ["events.dead queue"]
@@ -27,21 +26,21 @@ flowchart TD
     end
 
     subgraph PP ["Processing Plane"]
-        Worker["Worker\nchannel.consume()"]
-        Enrich["enrich.ts\nadd timestamps + metadata"]
-        Classify["classify.ts\nnormal | warning | critical"]
+        Worker["Worker<br/>channel.consume()"]
+        Enrich["enrich.ts<br/>add timestamps + metadata"]
+        Classify["classify.ts<br/>normal | warning | critical"]
         Worker --> Enrich --> Classify
     end
 
     subgraph SP ["Storage Plane"]
-        Mongo[("MongoDB\nevents collection\n(append-only)")]
+        Mongo[("MongoDB<br/>events collection<br/>(append-only)")]
     end
 
     subgraph OP ["Observation Plane"]
-        CS["Change Stream\n(async iterable)"]
-        WS["WebSocket Server\n/live"]
-        Metrics["Metrics Poller\n(every 5s)"]
-        Dashboard["Browser Dashboard\n(vanilla JS)"]
+        CS["Change Stream<br/>(async iterable)"]
+        WS["WebSocket Server<br/>/live"]
+        Metrics["Metrics Poller<br/>(every 5s)"]
+        Dashboard["Browser Dashboard<br/>(vanilla JS)"]
         CS --> WS
         Metrics --> WS
         WS --> Dashboard
@@ -76,7 +75,11 @@ Append-only. Events are never updated. A unique index on `raw.id` (the UUID from
 
 ### Observation Plane (`src/observation/`)
 
-Three components:
+EventHorizon has two independent observability surfaces — the **built-in dashboard** and an **external Grafana stack**. They serve different purposes and have no dependency on each other.
+
+#### Built-in dashboard (`/dashboard`)
+
+Four components power the native live feed:
 
 1. **`changeStream.ts`** — opens a MongoDB change stream on the `events` collection, filtered to `insert` operations. Accepts an `onInsert` callback and calls it for each new document. Returns a teardown function used during graceful shutdown. Recovers from cursor errors by reopening with `{ resumeAfter: lastToken }` after exponential backoff; the token is persisted via `checkpoint.ts` so **pod restarts replay missed events** rather than re-anchoring at the current oplog head (oplog overrun, error 286, clears the stale checkpoint). See ADR 0013.
 
@@ -84,19 +87,25 @@ Three components:
 
 3. **`metrics.ts`** — polls RabbitMQ Management API and MongoDB every 5s, computes rolling processing rate from an in-memory ring buffer, and broadcasts `{ type: "stats", data }` to all connected clients.
 
+4. **`checkpoint.ts`** — persists the change stream resume token to MongoDB (`changestream_checkpoints` collection) on every delivered event, so pod restarts replay from the last known position rather than the current oplog head.
+
+#### External Grafana stack ([rhizome-observability](https://github.com/obrienma/rhizome-observability))
+
+EventHorizon emits signals to a companion Grafana stack via OpenTelemetry and RabbitMQ's built-in Prometheus exporter. See the [Tracing & Instrumentation](#tracing--instrumentation) section below for the full signal inventory.
+
 ---
 
 ## RabbitMQ Topology
 
 ```mermaid
 flowchart LR
-    P[Producer] -->|"routingKey: events.pipeline\nevents.sensor\nevents.app"| EX
+    P[Producer] -->|"routingKey: events.pipeline<br/>events.sensor<br/>events.app"| EX
 
     subgraph RabbitMQ
-        EX["events\n(topic exchange)"]
-        WQ["events.work\n(durable queue)\nx-dead-letter-exchange: events.dlx\nx-message-ttl: 30000"]
-        DLX_EX["events.dlx\n(fanout exchange)"]
-        DLQ["events.dead\n(durable queue)"]
+        EX["events<br/>(topic exchange)"]
+        WQ["events.work<br/>(durable queue)<br/>x-dead-letter-exchange: events.dlx<br/>x-message-ttl: 30000"]
+        DLX_EX["events.dlx<br/>(fanout exchange)"]
+        DLQ["events.dead<br/>(durable queue)"]
 
         EX -->|"binding: events.#"| WQ
         WQ -->|"nack / TTL expired"| DLX_EX
@@ -115,14 +124,43 @@ flowchart LR
 
 ## Tracing & Instrumentation
 
-EventHorizon emits **OpenTelemetry** traces from both process entry points (`npm run dev` and `npm run worker`). The SDK is bootstrapped in `src/observation/tracing.ts` and exports spans over OTLP/HTTP (`OTEL_EXPORTER_OTLP_ENDPOINT`, default `http://localhost:4318`). If no collector is reachable the SDK no-ops silently — there is no hard dependency on a tracing backend.
+EventHorizon emits three categories of signal to the external Grafana stack.
 
-The design favours **wide spans** (many attributes per span, queried after the fact) over pre-aggregated counters — see ADR 0016. Two first-class spans bracket the pipeline:
+### Distributed traces (OTel)
+
+The SDK is bootstrapped in `src/observation/tracing.ts` and exports spans over OTLP/HTTP (`OTEL_EXPORTER_OTLP_ENDPOINT`, default `http://localhost:4318`). If no collector is reachable the SDK no-ops silently. SDK bootstrap ordering is covered by ADR 0015.
+
+The design favours **wide spans** over pre-aggregated counters for analytical queries — see ADR 0016. Two first-class spans bracket the pipeline:
 
 - **`event.process`** (`SpanKind.CONSUMER`, worker) — carries `event.id`, `event.type`, `classification`, `classification.tags`, `retry.count`, `write.collection`, and `messaging.*` attributes. A message that fails `EventSchema.parse()` records a `message.parse_failed` span event and sets the span status to `ERROR`.
 - **`event.observe`** (`SpanKind.INTERNAL`, server) — carries `subscribers.count`, `fanout.duration_ms`, and `changeStream.lag_ms` for the change-stream → WebSocket fanout.
 
-**Trace continuity across the RabbitMQ boundary** is the key property: `queue.ts` injects the active W3C trace context into the AMQP message headers (`propagation.inject`), and `worker.ts` extracts it (`propagation.extract`) so the consumer span continues the same trace started at HTTP ingest. The result is a single connected waterfall — HTTP ingest → AMQP publish → `event.process` → MongoDB insert → `event.observe` — rather than two disconnected root traces. SDK bootstrap ordering is covered by ADR 0015; the alerting-vs-analysis split between counters and span attributes by ADR 0016.
+**Trace continuity across the RabbitMQ boundary:** `queue.ts` injects the active W3C trace context into AMQP message headers (`propagation.inject`); `worker.ts` extracts it (`propagation.extract`) so the consumer span continues the same trace started at HTTP ingest. The result is a single connected waterfall — HTTP ingest → AMQP publish → `event.process` → MongoDB insert → `event.observe` — rather than two disconnected root traces.
+
+### Custom OTel metrics (Phase 18)
+
+Two counters and one gauge are exported via the env-configured `MeterProvider` (no additional wiring beyond the existing OTel bootstrap):
+
+| Prometheus metric | Instrument | Labels | Source | Description |
+|---|---|---|---|---|
+| `events_processed_total` | Counter | `event_type` | `worker.ts` | Incremented on every successful `channel.ack()` |
+| `events_failed_total` | Counter | `event_type`, `failure_reason` | `worker.ts` | Incremented on retry exhaustion; `failure_reason` ∈ `{parse_error, schema_error, processing_error}` |
+| `eventhorizon_change_stream_lag_milliseconds` | ObservableGauge | — | `metrics.ts` | Time between MongoDB insert and change stream delivery |
+
+These cover failure signals the HTTP response code cannot surface — a 202 response may still result in a dead-lettered event.  See ADR 0017.
+
+### RabbitMQ Prometheus exporter
+
+RabbitMQ's built-in exporter (`rabbitmq_prometheus` plugin, enabled by default) is published on port `:15692`. A Prometheus scrape job in rhizome-observability targets this port to provide queue depth, message rates, and consumer counts without any EventHorizon code.
+
+### Fault injection (Phase 17)
+
+Two opt-in knobs inject real errors for dashboard demo traffic — both default to `0` (off):
+
+- **`CHAOS_ERROR_RATE`** (server env var, `0`–`1`) — throws after Zod validation to produce real HTTP 500s.
+- **`--error-rate`** (seed producer CLI flag, `0`–`1`) — sends a malformed `id` to trigger real 422s.
+
+See ADR 0016 for the alerting-vs-analysis decision that determines which signals get counters vs span attributes.
 
 ---
 
@@ -157,11 +195,14 @@ sequenceDiagram
 
 ## Graceful Shutdown Sequence
 
+The server and worker are separate processes with independent shutdown handlers.
+
+### Server (`npm run dev`)
+
 ```mermaid
 sequenceDiagram
     participant OS as SIGTERM / SIGINT
     participant Server as Fastify Server
-    participant Worker as AMQP Consumer
     participant CS as Change Stream
     participant Mongo as MongoDB
     participant RMQ as RabbitMQ
@@ -175,4 +216,23 @@ sequenceDiagram
     Server->>OS: process.exit(0)
 ```
 
-Order matters: the consumer is cancelled before closing the channel to avoid message loss. MongoDB is closed after the change stream (which depends on the connection).
+MongoDB is closed after the change stream because the change stream cursor depends on the connection.
+
+### Worker (`npm run worker`)
+
+```mermaid
+sequenceDiagram
+    participant OS as SIGTERM / SIGINT
+    participant Worker as AMQP Consumer
+    participant Mongo as MongoDB
+    participant RMQ as RabbitMQ
+
+    OS->>Worker: signal received
+    Worker->>Worker: cancel consumer — stop accepting new messages
+    Worker->>Worker: finish in-flight message — ack or nack
+    Worker->>Mongo: closeDb() — close MongoDB connection
+    Worker->>RMQ: closeQueue() — close AMQP channel + connection
+    Worker->>OS: process.exit(0)
+```
+
+Consumer cancellation happens before channel close to avoid message loss — a channel closed mid-delivery leaves the message unacked and it will be redelivered to another worker.

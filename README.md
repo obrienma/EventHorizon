@@ -6,12 +6,37 @@ Architecturally, this project is a production-grade blueprint for a **Reactive D
 
 ---
 
-Ingest (Fastify) ──> Buffer (RabbitMQ) ──> Process (Worker Pool) ──> Persist (MongoDB) ──> Stream (WebSockets)
+```mermaid
+%%{init: {'themeVariables': {'fontSize': '10px'}, 'flowchart': {'nodeSpacing': 15, 'rankSpacing': 25}}}%%
+flowchart LR
+    A[Ingest<br/>Fastify] --> B[Buffer<br/>RabbitMQ]
+    B --> C[Process<br/>Worker Pool]
+    C --> D[(Persist<br/>MongoDB)]
+    D --> E[Live<br/>Dashboard]
+    D --> F[synapse-l4]
+
+    click F "https://github.com/obrienma/synapse-l4" "Go to synapse-l4 repo"
+
+    classDef clickable fill:#1d4ed8,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    class F clickable
+```
 
 ---
 
 ![EventHorizon - Google Chrome 2026-03-29 12-50-53 (1)](https://github.com/user-attachments/assets/2734d9c0-5e96-4eeb-bb58-ade9e1d98e0f)
 
+
+## 📋 Contents
+
+- [🧰 Stack](#-stack)
+- [🏗️ Architecture Overview](#️-architecture-overview)
+- [🔭 Observability](#-observability)
+- [📚 Docs](#-docs)
+- [🗂️ Project Structure](#️-project-structure)
+- [🗺️ Roadmap](#️-roadmap)
+- [🚀 Quick Start](#-quick-start)
+- [📦 npm Scripts](#-npm-scripts)
+- [🧠 TS Patterns Demonstrated](#-ts-patterns-demonstrated)
 
 ## 🧰 Stack
 
@@ -33,50 +58,64 @@ Ingest (Fastify) ──> Buffer (RabbitMQ) ──> Process (Worker Pool) ──>
 ```mermaid
 flowchart LR
     subgraph Ingestion Plane
-        A[POST /events] -->|Zod validate| B[RabbitMQ\nevents exchange]
+        A[POST /events] -->|Zod validate| B[RabbitMQ<br/>events exchange]
     end
 
     subgraph Processing Plane
         B -->|consume| C[Worker]
-        C -->|enrich + classify| D[(MongoDB\nevents)]
-        C -->|nack × 3| E[Dead Letter\nQueue]
+        C -->|nack × 3| E[Dead Letter<br/>Queue]
+    end
+
+    subgraph Storage Plane
+        D[(MongoDB<br/>events)]
     end
 
     subgraph Observation Plane
-        D -->|change stream| F[WS Server]
-        F -->|push| G[Browser\nDashboard]
-        H[Metrics\npoller] -->|stats every 5s| F
+        F[WS Server]
+        F -->|push| G[Browser<br/>Dashboard]
+        H[Metrics<br/>poller] -->|stats every 5s| F
     end
+
+    C -->|enrich + classify| D
+    D -->|change stream| F
 
     click A "/src/ingestion/" "Go to Ingestion Source"
     click C "/src/processing/" "Go to Processing Source"
     click D "/src/storage/" "Go to Storage Source"
     click F "/src/observation/" "Go to Observation Source"
 
+    classDef clickable fill:#1d4ed8,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    class A,C,D,F clickable
 ```
 
 ## 🔭 Observability
 
-EventHorizon is instrumented with OpenTelemetry — every event emits traces and metrics to a separate Grafana monitoring stack. (Log shipping to Loki is a planned next step; for now logs stay on the console.) In practice that means:
+The **built-in dashboard** (`/dashboard`) is a WebSocket-fed live event feed — raw throughput and pipeline stats updated in real time. For deeper visibility, EventHorizon is also instrumented with OpenTelemetry and emits traces and metrics to a companion **[Grafana monitoring stack](https://github.com/obrienma/rhizome-observability)** — service health, distributed traces, and failure signals the HTTP response can't surface. (Log shipping to Loki is a planned next step; for now logs stay on the console.) In practice the Grafana layer means:
 
 * **One trace per event, end to end.** A single event is followed across the whole pipeline, even across process boundaries — so when something is slow or breaks, you can see exactly where.
 * **A live dashboard.** Service health and what the pipeline is doing, at a glance — and the underlying traces are one click away for drill-down. Screenshot below.
 * **Failures the response can't show.** Events are processed after the request comes back, so a request can succeed and still fail later — those failures are tracked too, never hidden.
 * **Fault injection for demos.** Optional flags inject real errors so the dashboard's error panels have realistic traffic to show — off by default.
 
+<p><em><span style="color: #f59e0b">Errors shown are synthetic — generated via opt-in fault injection for dashboard demo traffic.</span></em></p>
 <img width="1715" height="1226" alt="Screenshot 2026-06-15 121348" src="https://github.com/user-attachments/assets/0f2c032c-612b-431d-83b2-f493bf43588c" />
 
 ## 📚 Docs
 
-| File | Contents |
-| --- | --- |
-| [ARCHITECTURE.md](https://www.google.com/search?q=docs/ARCHITECTURE.md) | Layer design, data flow, RabbitMQ topology |
-| [SERVICES.md](https://www.google.com/search?q=docs/SERVICES.md) | Per-module reference |
-| [API.md](https://www.google.com/search?q=docs/API.md) | HTTP + WebSocket routes |
-| [DEV_GETTING_STARTED.md](https://www.google.com/search?q=docs/DEV_GETTING_STARTED.md) | Full local setup walkthrough |
-| [TESTING.md](https://www.google.com/search?q=docs/TESTING.md) | Test strategy, what's covered and what isn't |
-| [DECISION_LOG.md](https://www.google.com/search?q=docs/DECISION_LOG.md) | Why each technology was chosen |
-| [USER_STORIES.md](https://www.google.com/search?q=docs/USER_STORIES.md) | What each persona needs, mapped to the code that delivers it |
+Each doc carries a **Last updated** date (last content edit) and a **Verified** date (last time its claims were checked against the code). Bump both when you touch a doc; bump Verified alone after an audit.
+
+| File | Contents | Last updated | Verified |
+| --- | --- | --- | --- |
+| [README.md](README.md) | Project overview | 2026-06-17 | 2026-06-17 |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layer design, data flow, RabbitMQ topology | 2026-06-17 | 2026-06-17 |
+| [SERVICES.md](docs/SERVICES.md) | Per-module reference | 2026-06-14 | 2026-06-14 |
+| [API.md](docs/API.md) | HTTP + WebSocket routes | 2026-06-14 | 2026-06-14 |
+| [DEV_GETTING_STARTED.md](docs/DEV_GETTING_STARTED.md) | Full local setup walkthrough | 2026-06-14 | 2026-06-14 |
+| [TESTING.md](docs/TESTING.md) | Test strategy, what's covered and what isn't | 2026-06-14 | 2026-06-14 |
+| [USER_STORIES.md](docs/USER_STORIES.md) | What each persona needs, mapped to the code that delivers it | 2026-06-15 | 2026-06-14 |
+| [diagrams/OVERVIEW.md](docs/diagrams/OVERVIEW.md) | Architecture diagrams | 2026-06-14 | 2026-06-14 |
+| [adr/](docs/adr/) | Architecture Decision Records | 2026-06-17 | — |
+| [journal.md](docs/journal.md) | Engineering journal — one entry per phase | 2026-06-15 | — |
 
 ## 🗂️ Project Structure
 
@@ -260,22 +299,3 @@ open http://localhost:3000/dashboard
 * Typed AMQP message payloads across publish/consume boundary
 * Strict null safety across async flows
 
-## 📋 Documentation Status
-
-Each doc carries a stamp under its title: **Last updated** (last content edit) and
-**Verified against `src/**` (last time its claims were checked against the code). Maintained
-by hand — bump both dates when you touch a doc, and bump "Verified" after auditing it against
-the source.
-
-| Doc | Last updated | Verified vs `src/` |
-| --- | --- | --- |
-| [README.md](README.md) | 2026-06-16 | 2026-06-16 |
-| [docs/ARCHITECTURE.md](https://www.google.com/search?q=docs/ARCHITECTURE.md) | 2026-06-14 | 2026-06-14 |
-| [docs/SERVICES.md](https://www.google.com/search?q=docs/SERVICES.md) | 2026-06-14 | 2026-06-14 |
-| [docs/API.md](https://www.google.com/search?q=docs/API.md) | 2026-06-14 | 2026-06-14 |
-| [docs/DEV_GETTING_STARTED.md](https://www.google.com/search?q=docs/DEV_GETTING_STARTED.md) | 2026-06-14 | 2026-06-14 |
-| [docs/TESTING.md](https://www.google.com/search?q=docs/TESTING.md) | 2026-06-14 | 2026-06-14 |
-| [docs/DECISION_LOG.md](https://www.google.com/search?q=docs/DECISION_LOG.md) | 2026-06-14 | 2026-06-14 |
-| [docs/adr/](https://www.google.com/search?q=docs/adr/) | 2026-06-15 | - |
-| [docs/USER_STORIES.md](https://www.google.com/search?q=docs/USER_STORIES.md) | 2026-06-14 | 2026-06-14 |
-| [docs/diagrams/OVERVIEW.md](https://www.google.com/search?q=docs/diagrams/OVERVIEW.md) | 2026-06-14 | 2026-06-14 |
