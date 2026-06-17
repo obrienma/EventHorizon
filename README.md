@@ -1,4 +1,8 @@
-# EventHorizon
+<p align="center">
+    <img width="300" alt="EventHorizon" src="https://github.com/user-attachments/assets/dd143f03-5587-4289-969a-7514258cadd7" />
+</p>
+
+
 
 EventHorizon is a real-time **telemetry and data streaming pipeline**. It processes live event data—like sensor readings or system metrics—and pushes it to a live browser dashboard in under a second.
 
@@ -15,7 +19,7 @@ flowchart LR
     D --> E[Live<br/>Dashboard]
     D --> F[synapse-l4]
 
-    click F "https://github.com/obrienma/synapse-l4" "Go to synapse-l4 repo"
+    click F "https://github.com/obrienma/synapse-l4#readme" "Go to synapse-l4 repo"
 
     classDef clickable fill:#1d4ed8,stroke:#1e40af,stroke-width:2px,color:#ffffff
     class F clickable
