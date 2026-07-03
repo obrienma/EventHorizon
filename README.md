@@ -263,6 +263,16 @@ _Dates below confirmed 2026-06-17_
 * [ ] **GitHub Actions — Journal Publishing:** Pipeline to publish engineering journal entries to a personal website (private repo). The same pattern scales to an enterprise developer portal (e.g. Backstage).
 * [ ] **Helm Chart:** Package the existing k3s raw YAML manifests as a Helm chart for portable, parameterised deployment.
 
+## 🐛 Known issues
+
+- [ ] **Deterministic parse failures retry needlessly** (EventHorizon):
+      malformed/schema-invalid messages go through 3 retries before
+      dead-lettering despite being unfixable by retry.
+- [ ] **Unclear ingestion failure status** (EventHorizon): `publishEvent`
+      throwing (RabbitMQ down) falls through to a generic 500; decide if 503
+      is more correct.
+- [ ] **No backpressure drain handling** (EventHorizon): `channel.publish()`
+      returning `false` is logged but not acted on.
 
 ### 📦 Production-Ready Baseline
 
