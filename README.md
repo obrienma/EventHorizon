@@ -262,7 +262,8 @@ _Dates below confirmed 2026-06-17_
 * [ ] **Alerting:** Grafana alert rules on existing custom OTel metrics (`events_failed_total`, `change_stream_lag`) — no new instrumentation required.
 * [ ] **GitHub Actions — Journal Publishing:** Pipeline to publish engineering journal entries to a personal website (private repo). The same pattern scales to an enterprise developer portal (e.g. Backstage).
 * [ ] **Helm Chart:** Package the existing k3s raw YAML manifests as a Helm chart for portable, parameterised deployment.
-* [ ] **GraphQL Query API (in progress):** Read-only Apollo Server layer over the Storage plane — `Event` interface mirroring the existing Zod discriminated union, `DataLoader`-batched `pipelineRuns`. Phase 0 (scaffold, `/graphql` boot check) done; Phases 1–3 (real schema/resolvers, DataLoader, ADR closeout) still ahead. See [ADR 0019](docs/adr/0019-graphql-query-api-over-fastify.md) and [.claude/plans/graphql-query-api.md](.claude/plans/graphql-query-api.md).
+
+* [ ] **GraphQL Query API (in progress):** Read-only Apollo Server layer over the Storage plane — `Event` interface mirroring the existing Zod discriminated union, `DataLoader`-batched `pipelineRuns`. Phases 0–1 (scaffold + real schema/resolvers over MongoDB) done; Phases 2–3 (`DataLoader`-batched `pipelineRuns`, ADR closeout) still ahead. See [ADR 0019](docs/adr/0019-graphql-query-api-over-fastify.md) and [.claude/plans/graphql-query-api.md](.claude/plans/graphql-query-api.md).
 
 ## 🐛 Known issues
 

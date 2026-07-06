@@ -139,6 +139,33 @@ async function fetchEventTypeDistribution(): Promise<Record<EventType, number>> 
   return dist;
 }
 
+// ── getStatsSnapshot ──────────────────────────────────────────────────────────
+// Assembles one StatsPayload on demand. Shared by the WS broadcast interval
+// below and the GraphQL `Query.stats` resolver — one implementation of the
+// stats query, not two.
+
+export async function getStatsSnapshot(): Promise<StatsPayload> {
+  const col = getDb().collection(EVENTS_COLLECTION);
+
+  const [totalProcessed, failedCount, queueDepth, eventTypeDistribution] =
+    await Promise.all([
+      col.countDocuments({ status: "processed" }),
+      col.countDocuments({ status: "failed" }),
+      fetchQueueDepth(),
+      fetchEventTypeDistribution(),
+    ]);
+
+  return {
+    totalProcessed,
+    failedCount,
+    queueDepth,
+    queueDepthStatus: queueDepthStatus(queueDepth),
+    processingRatePerSec: computeRatePerSec(),
+    changeStreamLagMs: lastChangeStreamLagMs,
+    eventTypeDistribution,
+  };
+}
+
 // ── startMetrics ──────────────────────────────────────────────────────────────
 // Starts the stats broadcast interval. Returns a teardown function.
 // broadcastFn is injected (not imported directly) so this module stays testable
@@ -148,26 +175,7 @@ export function startMetrics(broadcastFn: (msg: WsMessage) => void): () => void 
   const interval = setInterval(() => {
     void (async () => {
       try {
-        const col = getDb().collection(EVENTS_COLLECTION);
-
-        const [totalProcessed, failedCount, queueDepth, eventTypeDistribution] =
-          await Promise.all([
-            col.countDocuments({ status: "processed" }),
-            col.countDocuments({ status: "failed" }),
-            fetchQueueDepth(),
-            fetchEventTypeDistribution(),
-          ]);
-
-        const stats: StatsPayload = {
-          totalProcessed,
-          failedCount,
-          queueDepth,
-          queueDepthStatus: queueDepthStatus(queueDepth),
-          processingRatePerSec: computeRatePerSec(),
-          changeStreamLagMs: lastChangeStreamLagMs,
-          eventTypeDistribution,
-        };
-
+        const stats = await getStatsSnapshot();
         broadcastFn({ type: "stats", data: stats });
       } catch (err) {
         // Don't let a bad tick kill the interval — metrics are best-effort.

@@ -34,6 +34,7 @@ interface Event {
   timestamp: String!
   source: String!
   status: EventStatus!
+  processed: ProcessedMeta
 }
 
 type PipelineEvent implements Event {
@@ -41,6 +42,7 @@ type PipelineEvent implements Event {
   timestamp: String!
   source: String!
   status: EventStatus!
+  processed: ProcessedMeta
   pipelineId: String!
   step: String!
   stepStatus: String!
@@ -52,6 +54,7 @@ type SensorEvent implements Event {
   timestamp: String!
   source: String!
   status: EventStatus!
+  processed: ProcessedMeta
   sensorId: String!
   metric: String!
   value: Float!
@@ -63,6 +66,7 @@ type AppTelemetryEvent implements Event {
   timestamp: String!
   source: String!
   status: EventStatus!
+  processed: ProcessedMeta
   action: String!
   userId: String
 }
