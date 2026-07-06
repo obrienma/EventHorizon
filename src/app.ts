@@ -3,12 +3,14 @@ import { readFileSync } from "fs";
 import { eventRoutes } from "./ingestion/event.routes.js";
 import { healthRoutes } from "./health.routes.js";
 import { registerWsServer } from "./observation/wsServer.js";
+import { registerGraphQL } from "./graphql/plugin.js";
 
 export const app = Fastify({ logger: true });
 
 void app.register(eventRoutes);
 void app.register(healthRoutes);
 await registerWsServer(app);
+await registerGraphQL(app);
 
 const dashboardHtml = readFileSync(new URL("./dashboard/index.html", import.meta.url));
 const faviconIco   = readFileSync(new URL("./dashboard/favicon.ico", import.meta.url));

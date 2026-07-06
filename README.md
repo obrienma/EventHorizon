@@ -262,6 +262,7 @@ _Dates below confirmed 2026-06-17_
 * [ ] **Alerting:** Grafana alert rules on existing custom OTel metrics (`events_failed_total`, `change_stream_lag`) — no new instrumentation required.
 * [ ] **GitHub Actions — Journal Publishing:** Pipeline to publish engineering journal entries to a personal website (private repo). The same pattern scales to an enterprise developer portal (e.g. Backstage).
 * [ ] **Helm Chart:** Package the existing k3s raw YAML manifests as a Helm chart for portable, parameterised deployment.
+* [ ] **GraphQL Query API (in progress):** Read-only Apollo Server layer over the Storage plane — `Event` interface mirroring the existing Zod discriminated union, `DataLoader`-batched `pipelineRuns`. Phase 0 (scaffold, `/graphql` boot check) done; Phases 1–3 (real schema/resolvers, DataLoader, ADR closeout) still ahead. See [ADR 0019](docs/adr/0019-graphql-query-api-over-fastify.md) and [.claude/plans/graphql-query-api.md](.claude/plans/graphql-query-api.md).
 
 ## 🐛 Known issues
 
@@ -279,9 +280,10 @@ _Dates below confirmed 2026-06-17_
 * **Phases 1–6 (Core Ingestion & Storage):** Fastify app, Zod boundaries, RabbitMQ topology, and MongoDB idempotent persistence layer.
 * **Phases 7–12 (Testing & Resiliency):** Integrated mock execution, backpressure flow handling, and resume-token change stream checkpoints.
 * **Phases 13–19 (Orchestration & Telemetry):** Multi-stage container builds, replicated K3s manifests (Competing Consumers), and OpenTelemetry tracing spans.
+* **Phases 20–21 (Backpressure & Query API):** Bounded WebSocket backpressure (`bufferedAmount` skip/terminate thresholds) and the GraphQL query API scaffold (Apollo Server over Fastify) — see Roadmap for remaining GraphQL phases.
 
 > [!TIP]
-> **19 Architectural Phases Completed** | **44/44 Tests Passing (100% Green)**
+> **21 Architectural Phases Completed** | **44/44 Tests Passing (100% Green)**
 
 <details>
 <summary>🔍 View phase-by-phase implementation history...</summary>
@@ -314,6 +316,10 @@ _Dates below confirmed 2026-06-17_
 #### 💎 Hardening & Final Polishing (Phases 16–19)
 * **Phases 16–18 — Observability Hardening:** Validated full metrics/trace lifecycles directly against a Grafana stack (Tempo + Prometheus) and added custom OTel metrics for stream lag.
 * **Phase 19 — Test Suite Completion:** Cleared intentional-friction TODO placeholders and resolved critical type distribution bugs using `DistributiveOmit` in test helpers (44/44 tests green; clean `tsc --noEmit`).
+
+#### 🔌 Backpressure & Query API (Phases 20–21)
+* **Phase 20 — Bounded WebSocket Backpressure:** Fixed unbounded memory growth in `broadcast()` by checking `socket.bufferedAmount` against skip/terminate thresholds, mirroring the RabbitMQ layer's `WORKER_PREFETCH`/`QUEUE_DEPTH_*` pattern. Accepts documented at-most-once delivery to WS subscribers (ADR 0018).
+* **Phase 21 — GraphQL Scaffold:** Wired Apollo Server into Fastify (`@as-integrations/fastify`) with a minimal boot-check schema, live-verified against local infra. First of four phases building a read-only query API over the Storage plane (ADR 0019).
 
 </details>
 

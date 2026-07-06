@@ -1076,3 +1076,21 @@ Without a `bufferedAmount` ceiling, a single slow WebSocket consumer (e.g. a sta
 ### Decision: Accept At-Most-Once Delivery to WebSocket Subscribers Rather Than Add a Durable Transport
 
 Synapse-L4 (a downstream telemetry consumer) has no replay mechanism if it disconnects or falls behind — messages broadcast during that window are simply gone. Two durable alternatives were considered — a MongoDB change-stream consumer reusing EventHorizon's resume-token/checkpoint pattern, or a new RabbitMQ competing-consumer queue off the existing exchange — and both were rejected in favor of just fixing the memory bug. The MongoDB route was rejected because it couples a downstream service to EventHorizon's private document schema and checkpoint collection — a shared-database anti-pattern, not a contract. The RabbitMQ route was rejected only because it was unnecessary right now: tracing the actual demo traffic shows the LLM-fallback path this durability requirement was meant to protect against is unreachable in practice, since the seed producer's malformed-`id` case is already rejected at ingestion with a 422 and never reaches storage or WebSocket consumers. Full reasoning in ADR 0018.
+
+---
+
+## Phase 21 — GraphQL Query API, Phase 0 (Scaffold) — 2026-07-06
+
+Files: src/graphql/schema.ts, src/graphql/resolvers.ts, src/graphql/loaders.ts, src/graphql/plugin.ts, src/app.ts, package.json, docs/adr/0019-graphql-query-api-over-fastify.md, .claude/plans/graphql-query-api.md
+
+### Pattern: Prove the Integration Boots Before Writing Real Resolvers
+
+Per `.claude/plans/graphql-query-api.md` Phase 0, the schema was kept to a single `Query.health: String!` field returning `"ok"` and wired end-to-end (`registerGraphQL(app)` alongside the existing `registerWsServer(app)` in `app.ts`) before any of ADR 0019's real schema or resolvers were written. This isolates "does the Apollo/Fastify integration actually work" from "are the resolvers correct" — if the boot check had failed, the failure would unambiguously be in the integration layer, not buried under real query logic.
+
+### Decision: Apollo Server's Fastify Integration Confidence Upgraded from Medium to High
+
+ADR 0019 flagged `@as-integrations/fastify` as Medium confidence — a thinner, less battle-tested integration than Apollo's Express path — and asked for early validation rather than assumed correctness. The Phase 0 boot check (`apollo.start()` → `app.register(fastifyApollo(apollo))` → live `curl -X POST /graphql` against local infra returning `{"data":{"health":"ok"}}`) hit no rough edges: no version mismatch, no missing drain-plugin wiring, no context-function surprises. No probe entry was written for this phase, per the plan's own instruction to only document the scaffold step if it wasn't a straight line.
+
+### Challenges
+
+None. The scaffold matched the ADR's plan exactly; `tsc --noEmit` and the full Vitest suite (44/44) stayed green with no changes needed outside the new `src/graphql/` files and `app.ts`'s single new import/await pair.
