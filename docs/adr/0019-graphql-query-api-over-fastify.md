@@ -1,6 +1,6 @@
 # ADR 0019 — GraphQL Query API over the Storage Plane
 
-**Status:** Proposed
+**Status:** Accepted
 
 ---
 
@@ -131,3 +131,10 @@ type Query {
 - **Deferred, explicitly**: federating Synapse-L4 into this graph. The trigger for revisiting this would be Synapse-L4 gaining a real read endpoint driven by its own needs (e.g., a dashboard or debugging need for "show me the Axiom for source X"), at which point extending this graph to it is a natural Phase 2 rather than invented scope. Do not build that endpoint speculatively just to unlock this ADR.
 - Query complexity/depth limiting is out of scope for this phase (no public exposure, single consumer). If this API is ever exposed beyond local/demo use, that becomes a real requirement — noted here so it isn't silently forgotten, not implemented preemptively.
 - Confidence: **High** on the mapping (discriminated union → GraphQL interface, real N+1 → DataLoader). **Medium** on Apollo Server's Fastify integration ergonomics specifically — `@as-integrations/fastify` is a thinner, less battle-tested integration than Apollo's Express path; this should be validated early in implementation rather than assumed.
+
+### Measured
+
+- **Apollo/Fastify integration confidence: Medium → High.** The Phase 0 boot check (`apollo.start()` → `app.register(fastifyApollo(apollo))` → live `curl -X POST /graphql`) and every phase after it hit no version mismatches, no missing drain-plugin wiring, no context-function surprises. The thinner-integration risk called out above didn't materialize for this project's scope.
+- **N+1 fix, measured directly, not just implemented:** a naive per-field-instantiated loader made **5** Mongo queries for **5** `pipelineRuns` in one request; the per-request `DataLoader` made **1** (`find({ ..., pipelineId: { $in: [...] } })`), confirmed by patching `Collection.prototype.find` to count actual invocations. Full before/after in `docs/journal.md#phase-23-graphql-query-api-phase-2-pipelineruns--dataloader`.
+- **One schema gap found and closed before implementation:** the original schema block defined `ProcessedMeta` but never attached it as a field anywhere, while the companion plan's Phase 1 instructions assumed `processed.*` was readable. Resolved by adding a nullable `processed: ProcessedMeta` field to the `Event` interface and all three concrete types (already reflected in the Schema shape above) — confirmed with the user before writing resolver code, rather than the schema silently drifting from what got implemented.
+- **One incidental infra finding, out of scope for this ADR:** local verification hit a stale replica-set hostname after a `docker compose down`/`up` cycle, caused by `docker-compose.yml` not pinning the Mongo service's `hostname:`. Fixed locally via `rs.reconfig()`; not fixed in the compose file since it's unrelated to this decision. Will recur until addressed separately.

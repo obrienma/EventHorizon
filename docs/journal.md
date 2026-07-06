@@ -1150,3 +1150,17 @@ Bringing the Mongo container back up for this phase's live verification hit `Mon
 ### Challenge: `Collection.prototype` Patching, Not Instance Patching, for Query-Counting
 
 The before/after DataLoader demo needed to count actual Mongo `find()` invocations. Patching `.find` on one `db.collection(EVENTS_COLLECTION)` instance silently under-counted, because the MongoDB driver's `Db.collection()` returns a fresh `Collection` wrapper object on every call — the loader's own internal call obtains a different instance than the one the verification script patched. Patching `Collection.prototype.find` instead affects every instance via the prototype chain regardless of which call site obtained it, giving an accurate count.
+
+---
+
+## Phase 24 — GraphQL Query API, Phase 3 (ADR Closeout) — 2026-07-06
+
+Files: docs/adr/0019-graphql-query-api-over-fastify.md, README.md
+
+### Decision: Close the ADR Out With Measured Numbers, Not Just a Status Flip
+
+`docs/adr/0019` moved from `Proposed` to `Accepted` with a new "Measured" subsection under Consequences, rather than just flipping the status field. The ADR had made two falsifiable claims worth checking against what actually happened: a Medium-confidence note on `@as-integrations/fastify`'s Fastify integration ergonomics, and an implicit claim that DataLoader would fix the N+1 case. Both were confirmed directly — the integration hit no rough edges across three implementation phases (upgraded to High confidence), and the N+1 fix was measured, not assumed (5 queries naive vs. 1 batched, from Phase 2's `Collection.prototype`-patched count). An ADR that only ever states intentions and never records what happened loses its value as a decision record over time.
+
+### Challenges
+
+None. This phase was documentation-only — no code changed, so no new test or typecheck risk. The probe file for the DataLoader mechanism was already written during Phase 2 (`docs/probes/phase-23-dataloader-n-plus-1.md`), matching the plan's note that the DataLoader demo was "the one most worth polishing" — it didn't need a separate closeout probe.

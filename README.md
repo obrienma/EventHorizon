@@ -246,11 +246,11 @@ _Dates below confirmed 2026-06-17_
 | [README.md](README.md) | Project overview | 2026-06-17 | 2026-06-17 |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layer design, data flow, RabbitMQ topology | 2026-06-17 | 2026-06-17 |
 | [SERVICES.md](docs/SERVICES.md) | Per-module reference | 2026-06-14 | 2026-06-14 |
-| [API.md](docs/API.md) | HTTP + WebSocket routes | 2026-06-14 | 2026-06-14 |
+| [API.md](docs/API.md) | HTTP + WebSocket + GraphQL routes | 2026-07-06 | 2026-07-06 |
 | [DEV_GETTING_STARTED.md](docs/DEV_GETTING_STARTED.md) | Full local setup walkthrough | 2026-06-14 | 2026-06-14 |
 | [TESTING.md](docs/TESTING.md) | Test strategy, what's covered and what isn't | 2026-06-14 | 2026-06-14 |
 | [USER_STORIES.md](docs/USER_STORIES.md) | What each persona needs, mapped to the code that delivers it | 2026-06-15 | 2026-06-14 |
-| [diagrams/OVERVIEW.md](docs/diagrams/OVERVIEW.md) | Architecture diagrams | 2026-06-14 | 2026-06-14 |
+| [diagrams/OVERVIEW.md](docs/diagrams/OVERVIEW.md) | Architecture diagrams | 2026-07-06 | 2026-07-06 |
 | [adr/](docs/adr/) | Architecture Decision Records | 2026-06-17 | — |
 | [journal.md](docs/journal.md) | Engineering journal — one entry per phase | 2026-06-15 | — |
 
@@ -263,7 +263,6 @@ _Dates below confirmed 2026-06-17_
 * [ ] **GitHub Actions — Journal Publishing:** Pipeline to publish engineering journal entries to a personal website (private repo). The same pattern scales to an enterprise developer portal (e.g. Backstage).
 * [ ] **Helm Chart:** Package the existing k3s raw YAML manifests as a Helm chart for portable, parameterised deployment.
 
-* [ ] **GraphQL Query API (in progress):** Read-only Apollo Server layer over the Storage plane — `Event` interface mirroring the existing Zod discriminated union, `DataLoader`-batched `pipelineRuns`. Phases 0–2 (scaffold, real schema/resolvers, `DataLoader`-batched `pipelineRuns`) done — live-verified the N+1 fix directly (5 pipeline runs: 5 queries naive vs. 1 batched). Phase 3 (ADR closeout) still ahead. See [ADR 0019](docs/adr/0019-graphql-query-api-over-fastify.md) and [.claude/plans/graphql-query-api.md](.claude/plans/graphql-query-api.md).
 
 ## 🐛 Known issues
 
@@ -281,10 +280,10 @@ _Dates below confirmed 2026-06-17_
 * **Phases 1–6 (Core Ingestion & Storage):** Fastify app, Zod boundaries, RabbitMQ topology, and MongoDB idempotent persistence layer.
 * **Phases 7–12 (Testing & Resiliency):** Integrated mock execution, backpressure flow handling, and resume-token change stream checkpoints.
 * **Phases 13–19 (Orchestration & Telemetry):** Multi-stage container builds, replicated K3s manifests (Competing Consumers), and OpenTelemetry tracing spans.
-* **Phases 20–21 (Backpressure & Query API):** Bounded WebSocket backpressure (`bufferedAmount` skip/terminate thresholds) and the GraphQL query API scaffold (Apollo Server over Fastify) — see Roadmap for remaining GraphQL phases.
+* **Phases 20–24 (Backpressure & Query API):** Bounded WebSocket backpressure (`bufferedAmount` skip/terminate thresholds) and a read-only GraphQL query API over the Storage plane (Apollo Server over Fastify, `DataLoader`-batched `pipelineRuns`) — see [ADR 0019](docs/adr/0019-graphql-query-api-over-fastify.md).
 
 > [!TIP]
-> **21 Architectural Phases Completed** | **44/44 Tests Passing (100% Green)**
+> **24 Architectural Phases Completed** | **44/44 Tests Passing (100% Green)**
 
 <details>
 <summary>🔍 View phase-by-phase implementation history...</summary>
@@ -318,9 +317,12 @@ _Dates below confirmed 2026-06-17_
 * **Phases 16–18 — Observability Hardening:** Validated full metrics/trace lifecycles directly against a Grafana stack (Tempo + Prometheus) and added custom OTel metrics for stream lag.
 * **Phase 19 — Test Suite Completion:** Cleared intentional-friction TODO placeholders and resolved critical type distribution bugs using `DistributiveOmit` in test helpers (44/44 tests green; clean `tsc --noEmit`).
 
-#### 🔌 Backpressure & Query API (Phases 20–21)
+#### 🔌 Backpressure & Query API (Phases 20–24)
 * **Phase 20 — Bounded WebSocket Backpressure:** Fixed unbounded memory growth in `broadcast()` by checking `socket.bufferedAmount` against skip/terminate thresholds, mirroring the RabbitMQ layer's `WORKER_PREFETCH`/`QUEUE_DEPTH_*` pattern. Accepts documented at-most-once delivery to WS subscribers (ADR 0018).
-* **Phase 21 — GraphQL Scaffold:** Wired Apollo Server into Fastify (`@as-integrations/fastify`) with a minimal boot-check schema, live-verified against local infra. First of four phases building a read-only query API over the Storage plane (ADR 0019).
+* **Phase 21 — GraphQL Scaffold:** Wired Apollo Server into Fastify (`@as-integrations/fastify`) with a minimal boot-check schema, live-verified against local infra.
+* **Phase 22 — Real Schema & Resolvers:** `Query.event`/`events`/`stats` and an `Event` interface mirroring the existing Zod discriminated union, backed directly by MongoDB. `Query.stats` reuses a newly-extracted `getStatsSnapshot()` shared with the WS broadcast interval rather than re-querying.
+* **Phase 23 — DataLoader-Batched pipelineRuns:** `Query.pipelineRuns`/`pipelineRun` plus a per-request `DataLoader` for `PipelineRun.steps` — live-measured the N+1 fix directly (5 pipeline runs: 5 Mongo queries naive vs. 1 batched via `$in`).
+* **Phase 24 — ADR Closeout:** ADR 0019 accepted, with a "Measured" section recording the confidence upgrades and the N+1 numbers against what was originally proposed.
 
 </details>
 

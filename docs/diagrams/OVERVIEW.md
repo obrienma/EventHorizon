@@ -10,6 +10,7 @@ flowchart TD
     subgraph External
         P["Seed Producer\n(CLI)"]
         B["Browser\nDashboard"]
+        GC["GraphQL\nClient"]
     end
 
     subgraph EH["EventHorizon"]
@@ -44,6 +45,10 @@ flowchart TD
             WS["WebSocket\nServer"]
             ME["Metrics\nPoller"]
         end
+
+        subgraph QP["Query API (orthogonal read — not a pipeline stage)"]
+            GQL["Apollo Server\nPOST /graphql"]
+        end
     end
 
     P -->|"HTTP POST"| R
@@ -55,6 +60,8 @@ flowchart TD
     CS --> WS
     ME -->|"poll RMQ + Mongo"| WS
     WS -->|"push"| B
+    GC -->|"query"| GQL
+    GQL -->|"find / distinct\n(read-only)"| DB
 ```
 
 ## RabbitMQ Topology
@@ -122,4 +129,71 @@ classDiagram
     }
     StoredEvent --> AppEvent : raw
     StoredEvent --> ProcessedMeta : processed
+```
+
+## GraphQL Query API
+
+Read-only Apollo Server layer over the Storage plane (ADR 0019) — sits beside the pipeline, not inside it; nothing here feeds back into Ingestion/Processing/Storage/Observation.
+
+```mermaid
+flowchart LR
+    C["GraphQL\nClient"] -->|"POST /graphql"| AS["Apollo Server"]
+    AS --> Q1["Query.event / events / stats"]
+    AS --> Q2["Query.pipelineRuns / pipelineRun"]
+
+    Q1 -->|"findOne / find"| DB[("MongoDB\nevents")]
+
+    Q2 --> PR["PipelineRun.steps\nlatestStepStatus"]
+    PR -->|".load(pipelineId)\n(per request)"| DL["DataLoader\npipelineStepsLoader"]
+    DL -->|"one batched\n$in query"| DB
+```
+
+`Query.stats` reuses `getStatsSnapshot()` from `observation/metrics.ts` rather than re-querying — one implementation of "what counts as current stats," shared with the WebSocket broadcast interval.
+
+### Schema
+
+`Event` mirrors the same Zod discriminated union (`AppEvent`) the rest of the system already uses — the union tag becomes the interface's `__resolveType` discriminant, not a separately-invented data model.
+
+```mermaid
+classDiagram
+    class Event {
+        <<interface>>
+        +id: ID
+        +timestamp: String
+        +source: String
+        +status: EventStatus
+        +processed: ProcessedMeta?
+    }
+    class PipelineEvent {
+        +pipelineId: String
+        +step: String
+        +stepStatus: String
+        +durationMs: Int?
+    }
+    class SensorEvent {
+        +sensorId: String
+        +metric: String
+        +value: Float
+        +unit: String
+    }
+    class AppTelemetryEvent {
+        +action: String
+        +userId: String?
+    }
+    class ProcessedMeta {
+        +receivedAt: String
+        +enrichedAt: String
+        +classification: Classification
+        +tags: String[]
+    }
+    class PipelineRun {
+        +pipelineId: ID
+        +steps: PipelineEvent[]
+        +latestStepStatus: String
+    }
+    Event <|.. PipelineEvent
+    Event <|.. SensorEvent
+    Event <|.. AppTelemetryEvent
+    Event --> ProcessedMeta : processed (null if status=FAILED)
+    PipelineRun --> PipelineEvent : steps (DataLoader-batched)
 ```
