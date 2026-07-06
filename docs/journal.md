@@ -1124,3 +1124,29 @@ The schema's `events(limit: Int = 50)` argument is client-supplied. Without a ce
 ### Challenges
 
 None blocking. The live verification (Fastify `inject()` against real Mongo data, bypassing RabbitMQ/worker entirely by writing `StoredEvent`s directly via `saveEvent`/`saveFailedEvent`) surfaced one environment risk worth recording: running the full `server.ts` + `worker.ts` dev processes simultaneously pushed WSL2 memory to 6.4/7.6GB used with swap fully exhausted, causing both processes to hang silently past their normal ~2s boot time. Killed both before the OOM crash this project's memory notes already warn about, and re-verified with a single lightweight script (`app.inject()`, no live `.listen()`, no OTel/RabbitMQ bootstrap) instead — a lighter path worth defaulting to for future verification passes in this environment.
+
+---
+
+## Phase 23 — GraphQL Query API, Phase 2 (pipelineRuns + DataLoader) — 2026-07-06
+
+Files: src/graphql/loaders.ts, src/graphql/plugin.ts, src/graphql/resolvers.ts
+
+### Pattern: DataLoader Batches Per-Request, Not Per-Field
+
+`PipelineRun.steps` and `PipelineRun.latestStepStatus` both need the same pipeline's steps. Resolved naively (one `find()` per field per run), N pipeline runs in one request cost N (or 2N) queries. `createPipelineStepsLoader()` returns a `DataLoader<string, StoredEvent[]>` whose batch function fires once per event-loop tick with every `pipelineId` requested so far, issuing one `find({ ..., pipelineId: { $in: [...] } })` regardless of how many `.load()` calls preceded it. Apollo's context function (`plugin.ts`) creates exactly one loader per incoming request — sharing one loader across requests would leak one request's cached results into another's response.
+
+### Anti-Pattern Avoided: Reordering the Batch Result
+
+DataLoader requires the array returned by the batch function to be the same length and in the same order as the keys array it was given — index *i* of the result answers index *i* of the request, not "whichever id happened to match." The batch function groups matching documents into a `Map<pipelineId, StoredEvent[]>` first, then explicitly maps back over the original `pipelineIds` array (`pipelineIds.map((id) => byPipelineId.get(id) ?? [])`) rather than returning the grouped map's values directly — Map iteration order isn't guaranteed to match the request order, and even if it happened to for this data, that's not a contract to rely on.
+
+### Decision: Reuse the Phase 1 `PipelineEvent` Resolvers for `PipelineRun.steps`
+
+`PipelineRun.steps: [PipelineEvent!]!` is a concrete list type, not the `Event` interface — so GraphQL applies the existing `PipelineEvent` resolver map (written in Phase 1 for `Query.events`) to each loaded `StoredEvent` with no new field-mapping code. `latestStepStatus` reuses the same `pipelinePayload()` narrowing helper from Phase 1 rather than re-deriving the pipeline payload shape.
+
+### Challenge: Stale Replica-Set Hostname After Container Recreation
+
+Bringing the Mongo container back up for this phase's live verification hit `MongoServerError: node is not in primary or recovering state`. Cause: `docker-compose.yml`'s `mongo` service pins `container_name` but not `hostname`, so Docker assigns the container's short ID as its internal hostname — a new, different one on every `docker compose up` after a `down`. The single-node replica set's config (persisted in the `mongo_data` volume) still listed the *previous* container's hostname as its one member, which no longer resolved. Fixed by reconfiguring the replica set to the current hostname (`rs.reconfig(cfg, { force: true })` with `cfg.members[0].host` updated) rather than wiping the volume — preserves the seeded demo data. This will recur on any future `down`/`up` cycle unless `hostname:` is pinned in the compose file; flagged to the user as a follow-up, not fixed as part of this GraphQL phase.
+
+### Challenge: `Collection.prototype` Patching, Not Instance Patching, for Query-Counting
+
+The before/after DataLoader demo needed to count actual Mongo `find()` invocations. Patching `.find` on one `db.collection(EVENTS_COLLECTION)` instance silently under-counted, because the MongoDB driver's `Db.collection()` returns a fresh `Collection` wrapper object on every call — the loader's own internal call obtains a different instance than the one the verification script patched. Patching `Collection.prototype.find` instead affects every instance via the prototype chain regardless of which call site obtained it, giving an accurate count.

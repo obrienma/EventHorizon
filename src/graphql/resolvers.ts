@@ -2,6 +2,7 @@ import type { Filter } from "mongodb";
 import { getDb } from "../storage/db.js";
 import { EVENTS_COLLECTION } from "../storage/event.repository.js";
 import { getStatsSnapshot } from "../observation/metrics.js";
+import type { GraphQLContext } from "./loaders.js";
 import type { StoredEvent, EventType } from "../ingestion/event.schema.js";
 
 // ── Field-resolver helpers ────────────────────────────────────────────────────
@@ -43,14 +44,42 @@ const commonEventFields = {
   processed: (doc: StoredEvent) => (doc.status === "processed" ? doc.processed : null),
 };
 
-// ── Query.events args ─────────────────────────────────────────────────────────
+// ── Query args ────────────────────────────────────────────────────────────────
+// Hard ceiling on any client-supplied limit, regardless of the schema's
+// default — an unbounded client-supplied limit would force an unbounded scan.
 
-const EVENTS_LIMIT_CAP = 200;
+const QUERY_LIMIT_CAP = 200;
 
 interface EventsArgs {
   type?: EventType;
   status?: "processed" | "failed";
   limit?: number;
+}
+
+interface PipelineRunsArgs {
+  limit?: number;
+}
+
+interface PipelineRunArgs {
+  pipelineId: string;
+}
+
+// A PipelineRun's identity as it flows through the resolver chain — steps and
+// latestStepStatus are both derived from this single id via the DataLoader.
+interface PipelineRunParent {
+  pipelineId: string;
+}
+
+function latestStep(steps: StoredEvent[]): StoredEvent {
+  if (steps.length === 0) {
+    // Append-only storage means a pipelineId already confirmed to exist
+    // (via distinct() or the existence check in Query.pipelineRun) cannot
+    // lose its steps out from under a later load() — this would be a bug.
+    throw new Error("[graphql] pipelineRun resolved with zero steps");
+  }
+  return steps.reduce((latest, step) =>
+    new Date(step.raw.timestamp).getTime() > new Date(latest.raw.timestamp).getTime() ? step : latest,
+  );
 }
 
 export const resolvers = {
@@ -101,7 +130,7 @@ export const resolvers = {
     },
 
     events: async (_parent: unknown, args: EventsArgs) => {
-      const limit = Math.min(args.limit ?? 50, EVENTS_LIMIT_CAP);
+      const limit = Math.min(args.limit ?? 50, QUERY_LIMIT_CAP);
       const filter: Filter<StoredEvent> = {};
       if (args.type) filter["raw.type"] = args.type;
       if (args.status) filter.status = args.status;
@@ -115,12 +144,43 @@ export const resolvers = {
 
     stats: () => getStatsSnapshot(),
 
-    pipelineRuns: () => {
-      throw new Error("Not implemented — see Phase 2");
+    pipelineRuns: async (_parent: unknown, args: PipelineRunsArgs): Promise<PipelineRunParent[]> => {
+      const limit = Math.min(args.limit ?? 20, QUERY_LIMIT_CAP);
+      const pipelineIds = await getDb()
+        .collection<StoredEvent>(EVENTS_COLLECTION)
+        .distinct("raw.payload.pipelineId", { "raw.type": "pipeline" });
+
+      return pipelineIds.slice(0, limit).map((pipelineId: string) => ({ pipelineId }));
     },
 
-    pipelineRun: () => {
-      throw new Error("Not implemented — see Phase 2");
+    pipelineRun: async (
+      _parent: unknown,
+      args: PipelineRunArgs,
+    ): Promise<PipelineRunParent | null> => {
+      const exists = await getDb()
+        .collection<StoredEvent>(EVENTS_COLLECTION)
+        .findOne({ "raw.type": "pipeline", "raw.payload.pipelineId": args.pipelineId });
+
+      return exists ? { pipelineId: args.pipelineId } : null;
+    },
+  },
+
+  // parent here is the { pipelineId } shape returned by Query.pipelineRuns /
+  // Query.pipelineRun above, not a StoredEvent — steps and latestStepStatus
+  // are both derived from the id via the per-request DataLoader in context,
+  // so N runs in one request cost one $in query, not N.
+  PipelineRun: {
+    steps: (parent: PipelineRunParent, _args: unknown, context: GraphQLContext) => {
+      return context.pipelineStepsLoader.load(parent.pipelineId);
+    },
+    latestStepStatus: async (
+      parent: PipelineRunParent,
+      _args: unknown,
+      context: GraphQLContext,
+    ): Promise<string> => {
+      const steps = await context.pipelineStepsLoader.load(parent.pipelineId);
+      const latest = latestStep(steps);
+      return pipelinePayload(latest).status;
     },
   },
 };

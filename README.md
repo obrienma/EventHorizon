@@ -263,7 +263,7 @@ _Dates below confirmed 2026-06-17_
 * [ ] **GitHub Actions — Journal Publishing:** Pipeline to publish engineering journal entries to a personal website (private repo). The same pattern scales to an enterprise developer portal (e.g. Backstage).
 * [ ] **Helm Chart:** Package the existing k3s raw YAML manifests as a Helm chart for portable, parameterised deployment.
 
-* [ ] **GraphQL Query API (in progress):** Read-only Apollo Server layer over the Storage plane — `Event` interface mirroring the existing Zod discriminated union, `DataLoader`-batched `pipelineRuns`. Phases 0–1 (scaffold + real schema/resolvers over MongoDB) done; Phases 2–3 (`DataLoader`-batched `pipelineRuns`, ADR closeout) still ahead. See [ADR 0019](docs/adr/0019-graphql-query-api-over-fastify.md) and [.claude/plans/graphql-query-api.md](.claude/plans/graphql-query-api.md).
+* [ ] **GraphQL Query API (in progress):** Read-only Apollo Server layer over the Storage plane — `Event` interface mirroring the existing Zod discriminated union, `DataLoader`-batched `pipelineRuns`. Phases 0–2 (scaffold, real schema/resolvers, `DataLoader`-batched `pipelineRuns`) done — live-verified the N+1 fix directly (5 pipeline runs: 5 queries naive vs. 1 batched). Phase 3 (ADR closeout) still ahead. See [ADR 0019](docs/adr/0019-graphql-query-api-over-fastify.md) and [.claude/plans/graphql-query-api.md](.claude/plans/graphql-query-api.md).
 
 ## 🐛 Known issues
 
