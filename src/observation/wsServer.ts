@@ -2,6 +2,7 @@ import { WebSocket } from "ws";
 import type { FastifyInstance } from "fastify";
 import websocketPlugin from "@fastify/websocket";
 import type { WsMessage } from "../ingestion/event.schema.js";
+import { config } from "../config.js";
 
 // ── Pattern: Fan-out ──────────────────────────────────────────────────────────
 // One incoming event (from the change stream) must be delivered to N connected
@@ -27,6 +28,15 @@ const PING_INTERVAL_MS = 30_000;
 // ── broadcast ─────────────────────────────────────────────────────────────────
 // Exported so the change stream and metrics can push to all clients.
 // Safe to call with zero connected clients — iterates an empty Map.
+//
+// Anti-Pattern Avoided: Unbounded Backpressure Buffering (ADR 0018)
+// socket.send() queues bytes in process memory when the remote peer's read
+// loop can't keep up; readyState alone doesn't reveal this. Without a
+// bufferedAmount ceiling, one stalled client grows server memory without
+// bound. We accept at-most-once delivery instead: past WS_BUFFERED_AMOUNT_SKIP
+// a client is skipped for this message (it will catch up on state via the
+// next stats/event push, not via replay); past WS_BUFFERED_AMOUNT_TERMINATE
+// the connection itself is unrecoverable and is dropped.
 
 export function getConnectionCount(): number {
   return clients.size;
@@ -36,6 +46,19 @@ export function broadcast(message: WsMessage): void {
   const payload = JSON.stringify(message);
   for (const [socket] of clients) {
     if (socket.readyState !== WebSocket.OPEN) continue;
+
+    if (socket.bufferedAmount >= config.WS_BUFFERED_AMOUNT_TERMINATE) {
+      console.warn("[ws] client exceeded terminate threshold, dropping connection");
+      socket.terminate();
+      clients.delete(socket);
+      continue;
+    }
+
+    if (socket.bufferedAmount >= config.WS_BUFFERED_AMOUNT_SKIP) {
+      console.warn("[ws] client exceeded skip threshold, dropping message");
+      continue;
+    }
+
     try {
       socket.send(payload);
     } catch (err) {

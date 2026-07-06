@@ -1056,3 +1056,23 @@ The `classify.test.ts` helper `makeEvent(overrides: Omit<AppEvent, "id" | "times
 ### Decision: Fix the Last Typecheck Error Even Though Tests Already Passed
 
 After filling the TODOs, `npm test` was 44/44 green (Vitest transpiles via esbuild and does not type-check), but `npm run typecheck` still failed on the `makeEvent` helper. The helper was fixed rather than left, because the project gates on a clean `tsc --noEmit` — a passing runtime suite that does not type-check is a false green, and the failure was in the file already being edited.
+
+---
+
+## Phase 20 — Bounded WebSocket Backpressure — 2026-07-04
+
+cross-ref: observability
+
+Files: src/observation/wsServer.ts, src/config.ts, .env.example, docs/adr/0018-bounded-websocket-backpressure.md
+
+### Pattern: Bounded Backpressure via a Skip/Terminate Threshold Pair
+
+`broadcast()` checked `socket.readyState` before calling `socket.send()`, but a socket can be `OPEN` while its outbound buffer grows without limit — `readyState` reflects the TCP connection state, not how much unsent data is queued behind it. The fix reads `socket.bufferedAmount` and applies two thresholds, mirroring the `WORKER_PREFETCH`/`QUEUE_DEPTH_WARNING`/`QUEUE_DEPTH_CRITICAL` bounded-backpressure philosophy already used at the RabbitMQ layer: below `WS_BUFFERED_AMOUNT_SKIP` a message sends normally; between `WS_BUFFERED_AMOUNT_SKIP` and `WS_BUFFERED_AMOUNT_TERMINATE` the message is dropped for that client but the connection stays open; at or above `WS_BUFFERED_AMOUNT_TERMINATE` the connection itself is torn down, since a buffer that large means the client is not going to catch up.
+
+### Anti-Pattern Avoided: Unbounded Backpressure Buffering
+
+Without a `bufferedAmount` ceiling, a single slow WebSocket consumer (e.g. a stalled Synapse-L4 read loop) causes EventHorizon's process memory to grow without bound, because every `broadcast()` call keeps queuing bytes behind the stalled connection. The fix trades that unbounded growth for a documented, bounded loss of messages to that one client.
+
+### Decision: Accept At-Most-Once Delivery to WebSocket Subscribers Rather Than Add a Durable Transport
+
+Synapse-L4 (a downstream telemetry consumer) has no replay mechanism if it disconnects or falls behind — messages broadcast during that window are simply gone. Two durable alternatives were considered — a MongoDB change-stream consumer reusing EventHorizon's resume-token/checkpoint pattern, or a new RabbitMQ competing-consumer queue off the existing exchange — and both were rejected in favor of just fixing the memory bug. The MongoDB route was rejected because it couples a downstream service to EventHorizon's private document schema and checkpoint collection — a shared-database anti-pattern, not a contract. The RabbitMQ route was rejected only because it was unnecessary right now: tracing the actual demo traffic shows the LLM-fallback path this durability requirement was meant to protect against is unreachable in practice, since the seed producer's malformed-`id` case is already rejected at ingestion with a 422 and never reaches storage or WebSocket consumers. Full reasoning in ADR 0018.

@@ -152,6 +152,8 @@ Entries that touch the integration boundary with `~/dev/rhizome-observability` c
 
 **Phase 19 (2026-06-15):** Filled the intentional-friction TODO stubs that left 9 tests red — `classify.ts` (pipeline/sensor branches), `computeRatePerSec` in `metrics.ts` (read-time-filtered sliding window), and `saveEvent` in `event.repository.ts` (idempotent `insertOne` with `11000` swallow, mirroring `saveFailedEvent`). Also fixed the `classify.test.ts` `makeEvent` helper with a `DistributiveOmit` (plain `Omit` doesn't distribute over a discriminated union). Suite now 44/44 green; `tsc --noEmit` clean.
 
+**Phase 20 (2026-07-04):** Fixed an unbounded-memory bug in `broadcast()` (`wsServer.ts`) flagged while working the Synapse-L4 integration boundary — `readyState` was checked before `socket.send()`, but not `bufferedAmount`, so a stalled WS client (e.g. Synapse-L4's read loop) let the server queue outbound bytes without limit. Added a skip/terminate threshold pair (`WS_BUFFERED_AMOUNT_SKIP` default 1MB, `WS_BUFFERED_AMOUNT_TERMINATE` default 5MB, both in `config.ts`/`.env.example`), mirroring the `WORKER_PREFETCH`/`QUEUE_DEPTH_*` bounded-backpressure pattern already used at the RabbitMQ layer. Durable-delivery alternatives (Mongo change-stream reuse, a new RabbitMQ queue) were considered and rejected — see ADR 0018 — in favor of accepting documented at-most-once delivery to WS subscribers. Suite still 44/44 green; `tsc --noEmit` clean.
+
 **Build order: top-down** (start at the entry point, add each layer as it's called)
 
 **Not yet implemented** (in order):

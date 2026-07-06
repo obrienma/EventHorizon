@@ -24,6 +24,10 @@ const ConfigSchema = z.object({
   QUEUE_DEPTH_WARNING: z.coerce.number().int().min(1).default(50),
   QUEUE_DEPTH_CRITICAL: z.coerce.number().int().min(1).default(200),
 
+  // WebSocket backpressure thresholds (bytes of socket.bufferedAmount) — see ADR 0018
+  WS_BUFFERED_AMOUNT_SKIP: z.coerce.number().int().min(1).default(1_000_000),
+  WS_BUFFERED_AMOUNT_TERMINATE: z.coerce.number().int().min(1).default(5_000_000),
+
   // Observability
   STATS_PUSH_INTERVAL_MS: z.coerce.number().int().min(100).default(5_000),
   METRICS_RATE_WINDOW_MS: z.coerce.number().int().min(100).default(10_000),
