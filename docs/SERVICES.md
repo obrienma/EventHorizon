@@ -15,9 +15,15 @@ Parses and validates all environment variables using Zod at startup. If any requ
 
 ---
 
+## `src/app.ts`
+
+Builds the Fastify instance and registers everything that answers a request: `eventRoutes`, `healthRoutes`, `registerWsServer`, `registerGraphQL`, plus two static handlers (`GET /dashboard`, `GET /favicon.ico`) that serve `src/dashboard/index.html` and its favicon directly off disk. Exports `app`, imported by both `server.ts` (to `listen()`) and route/plugin tests (via `inject()`, no live listener needed).
+
+---
+
 ## `src/server.ts`
 
-Fastify application entry point. Registers plugins (`@fastify/websocket`), mounts routes, and orchestrates graceful shutdown on `SIGTERM`/`SIGINT`.
+The process entry point. Connects MongoDB and RabbitMQ, ensures indexes, starts the change stream and the metrics broadcast interval, wires `SIGTERM`/`SIGINT`/`uncaughtException`/`unhandledRejection` handlers to an ordered `shutdown()`, then calls `app.listen()`. Route and plugin registration itself lives in `app.ts`, not here.
 
 **The shutdown sequence is defined here** — see [ARCHITECTURE.md](ARCHITECTURE.md#graceful-shutdown-sequence).
 
@@ -86,13 +92,15 @@ classDiagram
 
 ### `src/ingestion/event.routes.ts`
 
-Registers three routes on the Fastify instance:
+Registers one route on the Fastify instance:
 
 | Route | Handler |
 |---|---|
-| `POST /events` | Validate → store as `queued` → publish to RabbitMQ → `202` |
-| `GET /events` | Paginated query with `?page`, `?limit`, `?type`, `?status` filters |
-| `GET /events/:id` | Single event by MongoDB `_id` |
+| `POST /events` | Validate → publish to RabbitMQ → `202` |
+
+There is no REST read path — querying stored events (single event, filtered list, or a
+pipeline run's step history) goes through the GraphQL API instead; see
+[GraphQL Query API](#graphql-query-api) below.
 
 > `GET /healthz` is registered separately in `src/health.routes.ts` (see above), not here.
 
@@ -188,6 +196,43 @@ Broadcasts `{ type: "stats", data }` to all connected WS clients.
 | `< QUEUE_DEPTH_WARNING` | `"ok"` (green) |
 | `>= QUEUE_DEPTH_WARNING` | `"warning"` (yellow) |
 | `>= QUEUE_DEPTH_CRITICAL` | `"critical"` (red) |
+
+---
+
+## GraphQL Query API
+
+Registered by `src/app.ts` (`registerGraphQL(app)`) alongside the REST/WS routes.
+Queries-only (no mutations, no subscriptions) — an orthogonal read layer over data
+already at rest in the Storage plane, not a fifth pipeline stage. See ADR 0019.
+
+### `src/graphql/schema.ts`
+
+`typeDefs` — the `Event` interface (`PipelineEvent` / `SensorEvent` / `AppTelemetryEvent`)
+plus `Query { event, events, pipelineRuns, pipelineRun, stats }`. Mirrors the Zod
+discriminated union in `event.schema.ts`; enum values pass through as-is via GraphQL
+enum value maps, no manual case-conversion code.
+
+### `src/graphql/resolvers.ts`
+
+`Query.event` / `Query.events` (type/status/limit filter, 200-doc hard cap regardless of
+client-supplied limit), `Event.__resolveType`, field resolvers reading `raw.payload.*` /
+`processed.*` off the stored document, `Query.pipelineRuns` / `Query.pipelineRun`
+(`distinct()` over `raw.payload.pipelineId`), and `Query.stats` (reuses
+`getStatsSnapshot()` from `metrics.ts` rather than re-querying).
+
+### `src/graphql/loaders.ts`
+
+`createPipelineStepsLoader()` — a `DataLoader<string, StoredEvent[]>` that batches every
+`.load(pipelineId)` call made while resolving one query into a single
+`find({ "raw.payload.pipelineId": { $in: [...] } })`, grouped by id and returned in
+request order (DataLoader's ordering requirement).
+
+### `src/graphql/plugin.ts`
+
+`registerGraphQL(app)` — starts an `ApolloServer` and mounts it at `/graphql` via
+`@as-integrations/fastify`. The context function creates a **fresh `DataLoader` instance
+per request**; a shared/global instance would leak cached results across unrelated
+requests.
 
 ---
 
