@@ -1,0 +1,107 @@
+# ── RabbitMQ: In-Cluster Message Broker ────────────────────────────────────────
+# Single-replica Deployment + PVC + ClusterIP Service, per ADR 0020.
+# Mirrors docker-compose.yml's local dev broker (same image, same ports,
+# same guest/guest credentials — RabbitMQ is only reachable in-cluster via
+# the ClusterIP Service below, never exposed outside the namespace).
+#
+# DNS name this satisfies: rabbitmq.event-horizon.svc.cluster.local
+# (already assumed by configmap.yaml's RABBITMQ_MANAGEMENT_URL and by
+# secret.yaml's RABBITMQ_URL once populated).
+#
+# Not HA: a single replica with one PVC is a demo-scale posture, matching
+# the resource-conscious limits on server.yaml/worker.yaml. Revisit if
+# broker availability ever becomes a felt problem, not before.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rabbitmq-data
+  namespace: event-horizon
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: event-horizon
+spec:
+  replicas: 1
+  strategy:
+    # Single PVC can't be mounted by two pods at once — a rolling update
+    # would deadlock waiting for the old pod to release it.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3-management-alpine
+          ports:
+            - containerPort: 5672
+              name: amqp
+            - containerPort: 15672
+              name: management
+            - containerPort: 15692
+              name: metrics
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              value: "guest"
+            - name: RABBITMQ_DEFAULT_PASS
+              value: "guest"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rabbitmq
+          livenessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "ping"]
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "256m"
+              memory: "256Mi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: rabbitmq-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: event-horizon
+spec:
+  selector:
+    app: rabbitmq
+  type: ClusterIP
+  ports:
+    - port: 5672
+      targetPort: 5672
+      name: amqp
+    - port: 15672
+      targetPort: 15672
+      name: management
+    - port: 15692
+      targetPort: 15692
+      name: metrics
