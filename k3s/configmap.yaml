@@ -8,13 +8,21 @@ data:
   PORT: "3000"
   HOST: "0.0.0.0"
 
-  # MongoDB — non-secret config. URI and credentials go in secret.yaml.
+  # MongoDB Atlas — non-secret config. config.ts builds the mongodb+srv://
+  # URI from MONGO_HOST + MONGO_USERNAME here and MONGO_PASSWORD in
+  # secret.yaml. Replace with your own Atlas cluster host and db user —
+  # do not commit the real values here (see secret.yaml's warning).
+  MONGO_HOST: "your-cluster.mongodb.net"
+  MONGO_USERNAME: "your-db-user"
   MONGO_DB_NAME: "event-horizon"
 
-  # RabbitMQ — adjust service name to match your RabbitMQ deployment.
-  # The management URL is used by the metrics module to poll queue depth.
-  # Pattern: <service-name>.<namespace>.svc.cluster.local
-  RABBITMQ_MANAGEMENT_URL: "http://guest:guest@rabbitmq.event-horizon.svc.cluster.local:15672"
+  # RabbitMQ — non-secret config. config.ts builds RABBITMQ_URL and
+  # RABBITMQ_MANAGEMENT_URL from this host plus RABBITMQ_USER/
+  # RABBITMQ_PASSWORD in secret.yaml, so the credentials only ever live in
+  # one place (no separate pre-built URL fields to keep in sync). Matches
+  # rabbitmq.yaml's Service DNS name — no port (config.ts appends
+  # :5672/:15672 for AMQP vs. the management API).
+  RABBITMQ_HOST: "rabbitmq.event-horizon.svc.cluster.local"
 
   # Queue / exchange topology — must match the values used when the broker
   # topology was first declared. Changing these requires draining the old

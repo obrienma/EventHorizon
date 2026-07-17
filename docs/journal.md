@@ -1190,3 +1190,53 @@ A Kubernetes Deployment defaults to `RollingUpdate` strategy, which starts the n
 ### Challenge: No `kubectl` Available to Dry-Run Against a Real API Server
 
 This environment has no `kubectl` installed, so `k3s/rabbitmq.yaml` and the updated `k3s/secret.yaml` were only validated as syntactically-correct YAML (`yaml.safe_load_all`), not schema-validated against the Kubernetes API (`kubectl apply --dry-run=server` or even `--dry-run=client`) or applied to a live k3s/GKE cluster. The manifest follows the existing `server.yaml`/`worker.yaml` structural conventions closely enough that this is a low-risk gap, but it's an unverified claim, not a confirmed one, until a cluster context is available to apply against.
+
+---
+
+## Phase 26 — MongoDB Atlas Config + RabbitMQ Credential Split (ADR 0021) — 2026-07-14
+
+Files: src/config.ts, .env, .env.example, .gitignore, k3s/configmap.yaml, k3s/rabbitmq.yaml, k3s/secret.yaml, k3s/secret.example.yaml, docs/adr/0021-mongodb-atlas-over-in-cluster-mongodb.md, docs/DEV_GETTING_STARTED.md
+
+### Decision: Discrete Credential Fields Instead of a Single Opaque `MONGO_URI` Secret
+
+Moving to Atlas needed a code change, not just a manifest — `MONGO_URI` previously had to be one required string, which works for the unauthenticated local replica set but has nowhere to keep a real password separate from the rest of the connection string. `config.ts`'s schema now makes `MONGO_URI` optional and adds `MONGO_HOST`/`MONGO_USERNAME`/`MONGO_PASSWORD` as optional siblings, with a `.refine()` requiring either the full URI or all three discrete fields. This mirrors the split ADR 0020 already established for RabbitMQ — non-secret values (`MONGO_HOST`, `MONGO_USERNAME`) in `configmap.yaml`, the real secret (`MONGO_PASSWORD`) in `secret.yaml` — but unlike RabbitMQ's guest/guest, Atlas credentials are real, so nothing here could be safely hardcoded.
+
+### Pattern: Resolve to a Single Derived Value, Keep the Consumer Unchanged
+
+`config.ts` exports `config.MONGO_URI` as a fully-resolved connection string regardless of which shape (`MONGO_URI` directly, or the three discrete fields) was supplied — the derivation happens once, after `safeParse`, not scattered across call sites. `src/storage/db.ts` still does exactly `new MongoClient(config.MONGO_URI)` with zero changes. Adding a second way to configure Mongo didn't require touching the one place that actually opens the connection.
+
+### Anti-Pattern Avoided: `!` Non-Null Assertions to Paper Over a Runtime Guarantee
+
+The `.refine()` guarantees that if `MONGO_URI` is absent, `MONGO_HOST`/`MONGO_USERNAME`/`MONGO_PASSWORD` are all present — but TypeScript's type system can't see across a Zod `.refine()` to narrow the optional fields back to required ones. The tempting shortcut was `env.MONGO_USERNAME!`/`env.MONGO_PASSWORD!`. Instead, the derivation re-checks all three with a plain `&&` guard and falls through to an explicit `if (!mongoUri) { ...; process.exit(1); }` — unreachable in practice given the refine, but it satisfies strict null checks honestly rather than asserting past them, per this project's own TypeScript convention of not using `!` unless provably safe by the type checker itself.
+
+### Decision: Placeholder Values in `configmap.yaml`, Not the Real Atlas Host/Username
+
+While drafting this change, the real Atlas username and cluster hostname were initially written directly into `k3s/configmap.yaml` (reasoning: hostnames/usernames aren't secrets, and `RABBITMQ_MANAGEMENT_URL` already hardcodes `guest`/`guest` there). Caught before committing: `configmap.yaml` is version-controlled, and unlike RabbitMQ's `guest`/`guest`, the real Atlas username and cluster host are this user's actual account details, not disposable defaults. Replaced with `your-cluster.mongodb.net` / `your-db-user` placeholders, consistent with `secret.yaml`'s own "do not commit real credentials" header and with `server.yaml`'s existing "replace with your registry path" convention.
+
+### Challenge: A Redaction Filter Missed an Embedded Secret
+
+Inspecting `.env` to see its current shape used a `sed` filter that redacted lines matching `PASSWORD|SECRET|KEY` in the variable name — but the pre-existing `MONGO_URI` line embedded the same password inline (`mongodb+srv://user:password@host`) under a variable name the filter didn't match, and printed it in full into the conversation transcript. Caught immediately after the command ran; flagged to the user with a recommendation to rotate the Atlas database user's password, since exposure in a transcript is exposure regardless of whether the source file itself is gitignored. The fix going forward isn't a smarter regex — it's not `cat`-ing `.env` at all when a targeted `Read` of a known line range, or just asking the user, will do.
+
+### Challenge: `tsx -e` Doesn't Support Top-Level Await
+
+Live-verifying the Atlas connection with `npx tsx -e '...await connectDb()...'` failed with `Top-level await is currently not supported with the "cjs" output format` — `tsx -e` transpiles the inline snippet as CommonJS regardless of the project's own ESM (`"type": "module"`) config. Wrapped the same logic in an `async function main() { ... } main();` in a scratch file instead of the project directory, which sidesteps the top-level-await restriction entirely; confirmed a real Atlas connection succeeds end-to-end (`connectDb()` → `[db] connected to "eventhorizon"` → `closeDb()`) before considering this phase done.
+
+### Anti-Pattern Avoided: RabbitMQ's Hardcoded `guest` Loopback Restriction
+
+Manual edits to `k3s/rabbitmq.yaml` caught something the original manifest missed: RabbitMQ hardcodes a localhost-only connection restriction on the literal username `guest`, for every protocol including AMQP, regardless of what password it's given. That's invisible in `docker-compose.yml` because the app runs on the host and reaches RabbitMQ through a published port, which presents as loopback. In-cluster, `server`/`worker` are separate pods reaching the `rabbitmq` Service over the pod network — not loopback — so `guest`/`guest` would reject every connection with `user 'guest' can only connect via localhost`, silently breaking the exact deployment ADR 0020 set out to unblock. Fixed by bootstrapping RabbitMQ with a dedicated `RABBITMQ_USER`/`RABBITMQ_PASSWORD` pair via `secretKeyRef`, which RabbitMQ's own docs recommend over disabling the loopback check.
+
+### Decision: Derive RabbitMQ's URLs the Same Way MongoDB's Is Derived
+
+The first pass at the `guest` fix stored `RABBITMQ_USER`/`RABBITMQ_PASSWORD` *and* fully pre-built `RABBITMQ_URL`/`RABBITMQ_MANAGEMENT_URL` strings in `secret.yaml` — four fields encoding two real values, with only a comment enforcing that the pre-built URLs stay byte-identical to the user/password pair. That's the exact problem this phase's Mongo work had just solved by deriving `MONGO_URI` from discrete parts instead of storing one opaque secret string. Applied the same fix here: `config.ts` gained `RABBITMQ_HOST`/`RABBITMQ_USER`/`RABBITMQ_PASSWORD` as optional fields alongside the now-optional `RABBITMQ_URL`/`RABBITMQ_MANAGEMENT_URL`, a second `.refine()` mirroring Mongo's, and derivation logic that builds both URLs from the host + credentials. `k3s/secret.yaml` dropped back to just `RABBITMQ_USER`/`RABBITMQ_PASSWORD`; `k3s/configmap.yaml` gained `RABBITMQ_HOST`. One credential pair now drives both the broker's own bootstrap and the app's connection to it.
+
+### Decision: Gitignore `k3s/secret.yaml`, Keep `secret.example.yaml` as the Tracked Template
+
+`k3s/secret.yaml` had been tracked in git since Phase 14, relying entirely on the file's own "do not commit real credentials" comment and human discipline to stay a template. That's the same failure mode `.env` avoids by being gitignored with `.env.example` as the checked-in reference. Renamed the tracked file to `k3s/secret.example.yaml`, added `k3s/secret.yaml` to `.gitignore`, and updated `docs/DEV_GETTING_STARTED.md`'s setup steps to `cp k3s/secret.example.yaml k3s/secret.yaml` before filling in real values — matching the `.env`/`.env.example` pattern already established in the same repo.
+
+### Challenge: Manual Edits Diverged the Local Secret From Its Own Template
+
+After the gitignore rename, manual edits made directly to the local (gitignored, therefore git-diff-invisible) `k3s/secret.yaml` re-introduced a plain `MONGO_URI` field while adding the new `RABBITMQ_USER`/`RABBITMQ_PASSWORD` fields — diverging from `k3s/secret.example.yaml`, which still expected the discrete `MONGO_HOST`/`MONGO_USERNAME`/`MONGO_PASSWORD` split from earlier in this same phase. Not caught by any tooling, since a gitignored file produces no diff to review — only found by explicitly cross-checking `secret.yaml`'s and `secret.example.yaml`'s key sets against each other. Reconciled by bringing `k3s/configmap.yaml` (`MONGO_HOST`/`MONGO_USERNAME` placeholders) and `k3s/secret.yaml` (`MONGO_PASSWORD`) back in line with the template. The general lesson: gitignoring a secrets file removes the commit-time safety net but also removes the diff-time visibility net — cross-checking it against its own tracked template is the substitute check.
+
+### Challenge: `dotenv/config`'s Silent Env-Var Backfill Contaminated a Verification Script
+
+A script simulating the exact env vars Kubernetes' `envFrom` would produce (merging `configmap.yaml` + a filled-in `secret.yaml`) kept resolving `RABBITMQ_URL` to the real local `guest`/`guest`/`localhost` value instead of the expected cluster-derived one — even though neither the ConfigMap nor the simulated Secret defined `RABBITMQ_URL` at all. Cause: `config.ts`'s `import "dotenv/config"` reads `.env` from `process.cwd()` and back-fills any key not already present in `process.env`; since the simulation script never explicitly set `RABBITMQ_URL`, dotenv silently filled it in from the real project `.env`, masking whether the derivation logic was actually being exercised. Fixed by `process.chdir()`-ing the simulation into a directory with no `.env` file before importing `config.js`, so dotenv found nothing to back-fill. Worth remembering for any future config-simulation script in this project: `config.ts`'s dotenv import is cwd-relative and silently merges, not cwd-relative-and-additive-only in the way that's easy to assume.

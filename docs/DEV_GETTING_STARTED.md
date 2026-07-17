@@ -212,6 +212,12 @@ RABBITMQ_MANAGEMENT_URL: "http://guest:guest@host.k3d.internal:15672"
 
 #### 5. Fill in the Secret
 
+`k3s/secret.yaml` is gitignored — copy the tracked template first:
+
+```bash
+cp k3s/secret.example.yaml k3s/secret.yaml
+```
+
 Base64-encode your connection strings and update `k3s/secret.yaml`:
 
 ```bash

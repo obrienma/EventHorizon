@@ -1,12 +1,24 @@
 # ── RabbitMQ: In-Cluster Message Broker ────────────────────────────────────────
 # Single-replica Deployment + PVC + ClusterIP Service, per ADR 0020.
-# Mirrors docker-compose.yml's local dev broker (same image, same ports,
-# same guest/guest credentials — RabbitMQ is only reachable in-cluster via
-# the ClusterIP Service below, never exposed outside the namespace).
+# Mirrors docker-compose.yml's local dev broker (same image, same ports) —
+# with one deliberate difference: credentials are NOT guest/guest here.
+#
+# RabbitMQ hardcodes a localhost-only connection restriction on the literal
+# username "guest", for every protocol including AMQP, regardless of what
+# password it's given (https://www.rabbitmq.com/docs/access-control). That's
+# invisible in docker-compose because the app runs on the host and reaches
+# RabbitMQ via a published port, which presents as loopback. In this
+# cluster, server/worker are separate pods reaching this Service over the
+# pod network — not loopback — so guest/guest would reject every
+# connection with "user 'guest' can only connect via localhost". A
+# dedicated user avoids the restriction entirely, which RabbitMQ's own
+# docs recommend over disabling the loopback check.
 #
 # DNS name this satisfies: rabbitmq.event-horizon.svc.cluster.local
-# (already assumed by configmap.yaml's RABBITMQ_MANAGEMENT_URL and by
-# secret.yaml's RABBITMQ_URL once populated).
+# (configmap.yaml's RABBITMQ_HOST). config.ts builds both RABBITMQ_URL and
+# RABBITMQ_MANAGEMENT_URL from that host plus the same RABBITMQ_USER/
+# RABBITMQ_PASSWORD this Deployment uses to bootstrap the broker itself —
+# one pair of credentials, not four fields to keep in sync.
 #
 # Not HA: a single replica with one PVC is a demo-scale posture, matching
 # the resource-conscious limits on server.yaml/worker.yaml. Revisit if
@@ -54,9 +66,15 @@ spec:
               name: metrics
           env:
             - name: RABBITMQ_DEFAULT_USER
-              value: "guest"
+              valueFrom:
+                secretKeyRef:
+                  name: event-horizon-secrets
+                  key: RABBITMQ_USER
             - name: RABBITMQ_DEFAULT_PASS
-              value: "guest"
+              valueFrom:
+                secretKeyRef:
+                  name: event-horizon-secrets
+                  key: RABBITMQ_PASSWORD
           volumeMounts:
             - name: data
               mountPath: /var/lib/rabbitmq

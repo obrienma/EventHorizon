@@ -2,3 +2,4 @@ node_modules/
 dist/
 .env
 *.log
+k3s/secret.yaml
