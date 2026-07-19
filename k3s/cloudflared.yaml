@@ -1,0 +1,77 @@
+# ── Cloudflared: External Entry Point via Cloudflare Tunnel ────────────────────
+# Per ADR 0022. Replaces a GKE Gateway/Ingress-provisioned Application Load
+# Balancer as EventHorizon's external entry point.
+#
+# Holds an outbound-only connection to Cloudflare's edge — no LoadBalancer
+# Service, no Ingress, no GCP forwarding rule. Cloudflare terminates TLS and
+# proxies inbound HTTP/WebSocket traffic back through the tunnel to
+# event-horizon-server's ClusterIP Service.
+#
+# Setup (one-time, outside this manifest):
+#   1. Create a tunnel in the Cloudflare dashboard (Zero Trust > Networks > Tunnels)
+#      or via `cloudflared tunnel create event-horizon`.
+#   2. Copy the tunnel token, then:
+#        kubectl create secret generic cloudflared-secrets \
+#          --namespace event-horizon \
+#          --from-literal=TUNNEL_TOKEN=<token>
+#   3. In the tunnel's Public Hostname config, route your chosen hostname
+#      (e.g. eventhorizon.cyberrhizome.ca) to:
+#        http://event-horizon-server.event-horizon.svc.cluster.local:3000
+#   4. When Rhizome Lens is deployed, add a second Public Hostname entry on
+#      the same tunnel pointing at its Service — no second Deployment needed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: event-horizon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      containers:
+        - name: cloudflared
+          # Pinned release tag, not :latest — a version bump should be a
+          # deliberate, reviewed edit here, not something that happens
+          # silently on pod restart.
+          image: cloudflare/cloudflared:2026.7.2
+          # IfNotPresent, not Always: unlike event-horizon-server/worker's
+          # :latest tag (mutable — same tag, different bytes over time),
+          # this tag is immutable by convention, so Always would just
+          # re-pull bytes guaranteed identical to what's cached.
+          imagePullPolicy: IfNotPresent
+          args:
+            - tunnel
+            - --no-autoupdate
+            - --metrics
+            - 0.0.0.0:2000
+            - run
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflared-secrets
+                  key: TUNNEL_TOKEN
+          # Catches a hung/disconnected tunnel client that hasn't crashed
+          # the process — cloudflared's own /ready endpoint reports edge
+          # connectivity, not just process liveness.
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "100m"
+              memory: "128Mi"

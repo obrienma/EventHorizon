@@ -3,3 +3,4 @@ dist/
 .env
 *.log
 k3s/secret.yaml
+k3s/configmap.yaml

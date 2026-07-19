@@ -12,9 +12,9 @@ data:
   # URI from MONGO_HOST + MONGO_USERNAME here and MONGO_PASSWORD in
   # secret.yaml. Replace with your own Atlas cluster host and db user —
   # do not commit the real values here (see secret.yaml's warning).
-  MONGO_HOST: "your-cluster.mongodb.net"
-  MONGO_USERNAME: "your-db-user"
-  MONGO_DB_NAME: "event-horizon"
+  MONGO_HOST: "your-hostname"
+  MONGO_USERNAME: "your-username"
+  MONGO_DB_NAME: "your-dbname"
 
   # RabbitMQ — non-secret config. config.ts builds RABBITMQ_URL and
   # RABBITMQ_MANAGEMENT_URL from this host plus RABBITMQ_USER/
