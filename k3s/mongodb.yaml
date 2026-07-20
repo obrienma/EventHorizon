@@ -1,0 +1,119 @@
+# ── MongoDB: In-Cluster Document Store ──────────────────────────────────────
+# Single-replica Deployment + PVC + ClusterIP Service, per ADR 0023.
+# Mirrors docker-compose.yml's local dev database exactly (same image, same
+# --replSet rs0 --bind_ip_all flags, unauthenticated) — reversing ADR 0021's
+# MongoDB Atlas choice after a full day confirmed GKE pods can't reach Atlas
+# through Cloud NAT (every connection failed with SSL alert 80; a cluster
+# with Cloud NAT structurally removed connected on the first attempt).
+# Pod-to-pod traffic to this Service never touches Cloud NAT, so it
+# sidesteps the failure entirely rather than depending on a fix for a
+# mechanism that was never fully isolated.
+#
+# --replSet rs0: change streams (ADR 0008) are built on the oplog, which
+# only exists on replica set members — a standalone mongod has none. A
+# single-node replica set satisfies this identically to how Atlas's did,
+# without the multi-node membership-stability burden ADR 0021 originally
+# wanted to avoid (that concern was specifically about multi-node
+# membership, which a single node never faces).
+#
+# Unauthenticated, deliberately: this Service is ClusterIP, reachable only
+# from inside the cluster's own pod network — never exposed through the
+# Cloudflare Tunnel (ADR 0022) or any external path. Matches
+# docker-compose.yml's local posture and RabbitMQ's own non-credentialed
+# demo-scale reasoning (ADR 0020). Revisit if this ever holds real
+# (non-demo) data, or a second service needs scoped access.
+#
+# DNS name this satisfies: mongodb.event-horizon.svc.cluster.local
+# (configmap.yaml's MONGO_URI).
+#
+# Not HA: a single replica with one PVC is a demo-scale posture, matching
+# the resource-conscious limits on server.yaml/worker.yaml/rabbitmq.yaml.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-data
+  namespace: event-horizon
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb
+  namespace: event-horizon
+spec:
+  replicas: 1
+  strategy:
+    # Single PVC can't be mounted by two pods at once — a rolling update
+    # would deadlock waiting for the old pod to release it.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:7
+          command: ["mongod"]
+          args: ["--replSet", "rs0", "--bind_ip_all"]
+          ports:
+            - containerPort: 27017
+              name: mongodb
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+          # Auto-initiate the replica set on first startup; no-op on
+          # subsequent starts — mirrors docker-compose.yml's healthcheck.
+          livenessProbe:
+            exec:
+              command:
+                - mongosh
+                - --eval
+                - "try { rs.status() } catch(e) { rs.initiate() }"
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - mongosh
+                - --eval
+                - "try { rs.status() } catch(e) { rs.initiate() }"
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 10
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mongodb-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: event-horizon
+spec:
+  selector:
+    app: mongodb
+  type: ClusterIP
+  ports:
+    - port: 27017
+      targetPort: 27017
+      name: mongodb

@@ -1,8 +1,10 @@
 # ADR 0021 — MongoDB Atlas Over In-Cluster MongoDB
 
-**Status:** Accepted
+**Status:** Rejected
 
 **Date:** 2026-07-14
+
+**Superseded by:** [ADR 0023](./0023-in-cluster-mongodb-reversing-adr-0021.md) (2026-07-19) — Atlas connectivity from GKE pods failed 100% of the time via Cloud NAT (SSL alert 80 on every attempt), confirmed by a working connection once Cloud NAT was structurally removed from the path. The decision below remains an accurate record of the reasoning at the time; it wasn't wrong given the information available, it was overtaken by an environment-specific connectivity failure this ADR had no way to anticipate. See ADR 0023 for the investigation and the reversal.
 
 ---
 

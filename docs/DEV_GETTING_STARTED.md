@@ -200,17 +200,17 @@ Update `k3s/server.yaml` and `k3s/worker.yaml` to use `imagePullPolicy: Never` s
 
 #### 4. Provision MongoDB and RabbitMQ
 
-The manifests assume MongoDB and RabbitMQ are reachable from inside the cluster. The simplest option for local k3d is to keep using the Docker Compose services and expose them to the cluster via host networking. Add these env overrides to `k3s/configmap.yaml`:
+The manifests assume MongoDB and RabbitMQ are reachable from inside the cluster. The simplest option for local k3d is to keep using the Docker Compose services and expose them to the cluster via host networking, rather than also applying `k3s/mongodb.yaml`/`k3s/rabbitmq.yaml` inside k3d. Add these env overrides to `k3s/configmap.yaml`:
 
 ```yaml
-MONGO_URI: "mongodb://host.k3d.internal:27017"
+MONGO_URI: "mongodb://host.k3d.internal:27017/eventhorizon?directConnection=true"
 RABBITMQ_URL: "amqp://guest:guest@host.k3d.internal:5672"
 RABBITMQ_MANAGEMENT_URL: "http://guest:guest@host.k3d.internal:15672"
 ```
 
-`host.k3d.internal` is the DNS name k3d provides for the host machine.
+`host.k3d.internal` is the DNS name k3d provides for the host machine. None of these values are secret here — the local Mongo is unauthenticated and RabbitMQ is `guest`/`guest` — and `config.ts` accepts `MONGO_URI`/`RABBITMQ_URL` as direct overrides (the same fields `configmap.yaml` uses in the real in-cluster deployment, per ADR 0023), so they belong in the ConfigMap rather than the Secret.
 
-#### 5. Fill in the Secret
+#### 5. Copy the Secret template
 
 `k3s/secret.yaml` is gitignored — copy the tracked template first:
 
@@ -218,14 +218,7 @@ RABBITMQ_MANAGEMENT_URL: "http://guest:guest@host.k3d.internal:15672"
 cp k3s/secret.example.yaml k3s/secret.yaml
 ```
 
-Base64-encode your connection strings and update `k3s/secret.yaml`:
-
-```bash
-echo -n "mongodb://host.k3d.internal:27017" | base64
-echo -n "amqp://guest:guest@host.k3d.internal:5672" | base64
-```
-
-Paste the output into the `MONGO_URI` and `RABBITMQ_URL` fields in `k3s/secret.yaml`.
+`server.yaml`/`worker.yaml` reference `event-horizon-secrets` via `envFrom`, so the Secret resource has to exist, but nothing in it needs a real value for this local-k3d path: step 4 already supplied `MONGO_URI` and `RABBITMQ_URL` directly, so neither `RABBITMQ_USER`/`RABBITMQ_PASSWORD` (the only fields left in `secret.yaml`, per ADR 0023) are read. The template's empty placeholders are fine as-is.
 
 #### 6. Apply the manifests
 

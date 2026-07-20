@@ -8,12 +8,11 @@ data:
   PORT: "3000"
   HOST: "0.0.0.0"
 
-  # MongoDB Atlas — non-secret config. config.ts builds the mongodb+srv://
-  # URI from MONGO_HOST + MONGO_USERNAME here and MONGO_PASSWORD in
-  # secret.yaml. Replace with your own Atlas cluster host and db user —
-  # do not commit the real values here (see secret.yaml's warning).
-  MONGO_HOST: "your-hostname"
-  MONGO_USERNAME: "your-username"
+  # MongoDB — in-cluster (mongodb.yaml), per ADR 0023. Non-secret: the
+  # connection is unauthenticated (ClusterIP-only, never externally
+  # exposed), so there's no password to keep in secret.yaml. Matches
+  # mongodb.yaml's Service DNS name and --replSet rs0.
+  MONGO_URI: "mongodb://mongodb.event-horizon.svc.cluster.local:27017/eventhorizon?replicaSet=rs0"
   MONGO_DB_NAME: "your-dbname"
 
   # RabbitMQ — non-secret config. config.ts builds RABBITMQ_URL and

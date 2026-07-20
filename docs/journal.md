@@ -1240,3 +1240,25 @@ After the gitignore rename, manual edits made directly to the local (gitignored,
 ### Challenge: `dotenv/config`'s Silent Env-Var Backfill Contaminated a Verification Script
 
 A script simulating the exact env vars Kubernetes' `envFrom` would produce (merging `configmap.yaml` + a filled-in `secret.yaml`) kept resolving `RABBITMQ_URL` to the real local `guest`/`guest`/`localhost` value instead of the expected cluster-derived one — even though neither the ConfigMap nor the simulated Secret defined `RABBITMQ_URL` at all. Cause: `config.ts`'s `import "dotenv/config"` reads `.env` from `process.cwd()` and back-fills any key not already present in `process.env`; since the simulation script never explicitly set `RABBITMQ_URL`, dotenv silently filled it in from the real project `.env`, masking whether the derivation logic was actually being exercised. Fixed by `process.chdir()`-ing the simulation into a directory with no `.env` file before importing `config.js`, so dotenv found nothing to back-fill. Worth remembering for any future config-simulation script in this project: `config.ts`'s dotenv import is cwd-relative and silently merges, not cwd-relative-and-additive-only in the way that's easy to assume.
+
+---
+
+## Phase 27 — In-Cluster MongoDB, Reversing ADR 0021 (ADR 0023) — 2026-07-19
+
+Files: docs/adr/0023-in-cluster-mongodb-reversing-adr-0021.md, docs/adr/0021-mongodb-atlas-over-in-cluster-mongodb.md, k3s/mongodb.yaml, k3s/configmap.yaml, k3s/configmap.example.yaml, k3s/secret.yaml, k3s/secret.example.yaml
+
+### Decision: Sidestep Cloud NAT Rather Than Chase Its Exact Failure Mechanism
+
+A full day of investigation established *that* GKE pods can't reach MongoDB Atlas through Cloud NAT — every attempt failed identically with `SSL routines:ssl3_read_bytes:tlsv1 alert internal error` right after `ClientHello`, and a temporary GKE Standard cluster with nodes given direct external IPs (structurally removing Cloud NAT from the path) connected on the first attempt with no other change — without ever establishing *why* Cloud NAT specifically breaks it. Rather than betting engineering time on an unconfirmed fix for an unconfirmed mechanism, ADR 0023 removes the dependency on Cloud NAT entirely: pod-to-pod traffic to an in-cluster MongoDB Service never routes through it, regardless of what NAT is actually doing to the TLS handshake.
+
+### Pattern: Mirror the Same-Phase-25 RabbitMQ Shape for a New Stateful Service
+
+`k3s/mongodb.yaml` is a near-mechanical copy of `k3s/rabbitmq.yaml`'s structure — single-replica Deployment + `ReadWriteOnce` PVC + ClusterIP Service, `strategy.type: Recreate` for the same singly-mounted-PVC deadlock reason. Having already solved "how does a stateful in-cluster service look in this repo" once, the second instance of the same problem needed no new design, just the same shape applied to `mongo:7 --replSet rs0 --bind_ip_all` instead of `rabbitmq:3-management-alpine`.
+
+### Decision: No Code Changes — the Unauthenticated `MONGO_URI` Path Already Existed
+
+ADR 0021's own `config.ts` schema (Phase 26) already accepted a full `MONGO_URI` as one of its two valid shapes, specifically to support the unauthenticated local docker-compose database. Reversing back to in-cluster MongoDB reuses that exact shape rather than reopening `config.ts` — `k3s/configmap.yaml` now sets `MONGO_URI` directly to the in-cluster Service DNS name, and `MONGO_PASSWORD` is deleted from `k3s/secret.yaml`/`secret.example.yaml` since there's no longer a credential to hold. The entire reversal is a manifest-and-config-value change, not a code change.
+
+### Anti-Pattern Avoided: Editing an Accepted ADR's Body Text
+
+ADR 0021 remains factually accurate as a record of the reasoning available on 2026-07-14 — it wasn't a bad decision, it was overtaken by an Atlas-connectivity failure this ADR had no way to anticipate. Per this project's ADR convention, its body wasn't rewritten to match the new decision; instead, a `Superseded by` line was added right under its `Status: Accepted` header, pointing at ADR 0023, leaving the original Context/Decision/Rationale intact as history.

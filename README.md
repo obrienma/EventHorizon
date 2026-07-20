@@ -197,7 +197,7 @@ The codebase is organized into four operational planes, separating ingestion fro
 | **⚡ Processing** | `src/processing/` <br> `src/processing/processors/` | **Message Broker:** Manages **RabbitMQ topology bindings**, consumer logic, **backpressure handling**, and modular event pipelines (`enrich`, `classify`). |
 | **💾 Storage** | `src/storage/` | **Persistence:** Controls the MongoDB client tier and features append-only repositories utilizing **idempotent write strategies**. |
 | **👁️ Observation** | `src/observation/` <br> `src/health.routes.ts` | **Telemetry & Streaming:** Manages **OTel tracing spans**, live WebSockets, rolling metrics, **durable change stream resumption**, and health probes. |
-| **📦 Deployment** | `k3s/` <br> `Dockerfile` | **Orchestration:** Multi-stage container builds and decoupled Kubernetes manifests (Namespace, ConfigMap, Secret, Server, Replicated Workers, and an in-cluster RabbitMQ). Raw manifests, not Helm, for GKE — see [ADR 0020](docs/adr/0020-gke-deployment-manifest-approach-and-rabbitmq-placement.md). MongoDB is Atlas-hosted, not in-cluster — see [ADR 0021](docs/adr/0021-mongodb-atlas-over-in-cluster-mongodb.md). |
+| **📦 Deployment** | `k3s/` <br> `Dockerfile` | **Orchestration:** Multi-stage container builds and decoupled Kubernetes manifests (Namespace, ConfigMap, Secret, Server, Replicated Workers, and in-cluster RabbitMQ + MongoDB). Raw manifests, not Helm, for GKE — see [ADR 0020](docs/adr/0020-gke-deployment-manifest-approach-and-rabbitmq-placement.md). MongoDB is in-cluster, not Atlas-hosted — Atlas was tried first but GKE pods couldn't reach it through Cloud NAT, so ADR 0023 reversed [ADR 0021](docs/adr/0021-mongodb-atlas-over-in-cluster-mongodb.md). |
 | **🛠️ Tools** | `src/dashboard/` <br> `src/seed/` | **Simulation & UI:** Standalone CLI **load generation seed tools** and a lightweight real-time monitoring dashboard frontend. |
 
 ### 📐 Scale Design
@@ -243,11 +243,11 @@ The **built-in dashboard** (`/dashboard`) is a WebSocket-fed live event feed —
 _Dates below confirmed 2026-06-17_
 | File | Contents | Last updated | Verified |
 | --- | --- | --- | --- |
-| [README.md](README.md) | Project overview | 2026-06-17 | 2026-06-17 |
+| [README.md](README.md) | Project overview | 2026-07-19 | 2026-07-19 |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layer design, data flow, RabbitMQ topology | 2026-06-17 | 2026-06-17 |
 | [SERVICES.md](docs/SERVICES.md) | Per-module reference | 2026-06-14 | 2026-06-14 |
 | [API.md](docs/API.md) | HTTP + WebSocket + GraphQL routes | 2026-07-06 | 2026-07-06 |
-| [DEV_GETTING_STARTED.md](docs/DEV_GETTING_STARTED.md) | Full local setup walkthrough | 2026-07-14 | 2026-07-14 |
+| [DEV_GETTING_STARTED.md](docs/DEV_GETTING_STARTED.md) | Full local setup walkthrough | 2026-07-19 | 2026-07-19 |
 | [TESTING.md](docs/TESTING.md) | Test strategy, what's covered and what isn't | 2026-06-14 | 2026-06-14 |
 | [USER_STORIES.md](docs/USER_STORIES.md) | What each persona needs, mapped to the code that delivers it | 2026-06-15 | 2026-06-14 |
 | [diagrams/OVERVIEW.md](docs/diagrams/OVERVIEW.md) | Architecture diagrams | 2026-07-06 | 2026-07-06 |
@@ -261,7 +261,7 @@ _Dates below confirmed 2026-06-17_
 * [ ] **Log Shipping (Loki):** Introduce structured logging and ship logs to Loki via OTel Collector. Correlate trace IDs to log lines inside Grafana queries. Logger choice and migration scope TBD — ADR pending.
 * [ ] **Alerting:** Grafana alert rules on existing custom OTel metrics (`events_failed_total`, `change_stream_lag`) — no new instrumentation required.
 * [ ] **GitHub Actions — Journal Publishing:** Pipeline to publish engineering journal entries to a personal website (private repo). The same pattern scales to an enterprise developer portal (e.g. Backstage).
-* [ ] **Apply to GKE:** `k3s/` manifests + in-cluster RabbitMQ + MongoDB Atlas config are written and simulation-verified (ADR 0020, ADR 0021), but not yet applied to a live GKE cluster — no `kubectl` in the dev environment used to build this.
+* [ ] **Apply to GKE:** `k3s/` manifests + in-cluster RabbitMQ + in-cluster MongoDB are written and simulation-verified (ADR 0020, ADR 0023), but not yet applied to a live GKE cluster — no `kubectl` in the dev environment used to build this.
 
 
 ## 🐛 Known issues
@@ -281,10 +281,10 @@ _Dates below confirmed 2026-06-17_
 * **Phases 7–12 (Testing & Resiliency):** Integrated mock execution, backpressure flow handling, and resume-token change stream checkpoints.
 * **Phases 13–19 (Orchestration & Telemetry):** Multi-stage container builds, replicated K3s manifests (Competing Consumers), and OpenTelemetry tracing spans.
 * **Phases 20–24 (Backpressure & Query API):** Bounded WebSocket backpressure (`bufferedAmount` skip/terminate thresholds) and a read-only GraphQL query API over the Storage plane (Apollo Server over Fastify, `DataLoader`-batched `pipelineRuns`) — see [ADR 0019](docs/adr/0019-graphql-query-api-over-fastify.md).
-* **Phases 25–26 (GKE Deployment Prep):** Raw manifests + in-cluster RabbitMQ for GKE (ADR 0020); MongoDB Atlas config with discrete host/username/password fields so passwords stay in a k8s Secret separate from non-secret config, applied symmetrically to RabbitMQ once its `guest`/`guest` default was found to hardcode a localhost-only restriction that breaks pod-to-pod traffic in-cluster (ADR 0021).
+* **Phases 25–27 (GKE Deployment Prep):** Raw manifests + in-cluster RabbitMQ for GKE (ADR 0020); MongoDB Atlas config with discrete host/username/password fields so passwords stay in a k8s Secret separate from non-secret config, applied symmetrically to RabbitMQ once its `guest`/`guest` default was found to hardcode a localhost-only restriction that breaks pod-to-pod traffic in-cluster (ADR 0021); Atlas reversed back to in-cluster MongoDB after GKE pods proved unable to reach it through Cloud NAT (ADR 0023).
 
 > [!TIP]
-> **26 Architectural Phases Completed** | **44/44 Tests Passing (100% Green)**
+> **27 Architectural Phases Completed** | **44/44 Tests Passing (100% Green)**
 
 <details>
 <summary>🔍 View phase-by-phase implementation history...</summary>
@@ -325,9 +325,10 @@ _Dates below confirmed 2026-06-17_
 * **Phase 23 — DataLoader-Batched pipelineRuns:** `Query.pipelineRuns`/`pipelineRun` plus a per-request `DataLoader` for `PipelineRun.steps` — live-measured the N+1 fix directly (5 pipeline runs: 5 Mongo queries naive vs. 1 batched via `$in`).
 * **Phase 24 — ADR Closeout:** ADR 0019 accepted, with a "Measured" section recording the confidence upgrades and the N+1 numbers against what was originally proposed.
 
-#### ☁️ GKE Deployment Prep (Phases 25–26)
+#### ☁️ GKE Deployment Prep (Phases 25–27)
 * **Phase 25 — Manifest Approach & RabbitMQ Placement:** Raw `k3s/*.yaml` manifests, not Helm, for GKE Autopilot; added `k3s/rabbitmq.yaml` (Deployment + PVC + ClusterIP Service) so the in-cluster DNS name `configmap.yaml` already assumed actually resolves (ADR 0020).
 * **Phase 26 — MongoDB Atlas Config & RabbitMQ Credential Split:** `config.ts` now builds `MONGO_URI` and `RABBITMQ_URL`/`RABBITMQ_MANAGEMENT_URL` from discrete host/username/password fields, so each password lives in a k8s Secret separate from non-secret ConfigMap values, instead of one opaque connection string (ADR 0021). Also found and fixed a real RabbitMQ gotcha along the way: the default `guest` user hardcodes a localhost-only restriction that silently rejects all pod-to-pod AMQP traffic in-cluster (invisible in docker-compose, where the app reaches the broker via loopback). `k3s/secret.yaml` is now gitignored, with `k3s/secret.example.yaml` as the tracked template — matching the existing `.env`/`.env.example` pattern.
+* **Phase 27 — In-Cluster MongoDB, Reversing ADR 0021:** A full day of investigation confirmed GKE pods can't reach Atlas through Cloud NAT — every connection attempt failed identically with an SSL alert immediately after `ClientHello`, and a diagnostic cluster with Cloud NAT structurally removed from the path connected on the first attempt with no other change. Rather than chase the exact NAT mechanism or pay for Atlas's M10+ private-connectivity tier, added `k3s/mongodb.yaml` (mirrors `rabbitmq.yaml`'s Deployment + PVC + ClusterIP Service shape) and pointed `MONGO_URI` at it directly — no code changes, since `config.ts` already supported an unauthenticated connection string for local dev (ADR 0023).
 
 </details>
 
