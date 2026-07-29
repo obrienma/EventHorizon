@@ -1262,3 +1262,75 @@ ADR 0021's own `config.ts` schema (Phase 26) already accepted a full `MONGO_URI`
 ### Anti-Pattern Avoided: Editing an Accepted ADR's Body Text
 
 ADR 0021 remains factually accurate as a record of the reasoning available on 2026-07-14 — it wasn't a bad decision, it was overtaken by an Atlas-connectivity failure this ADR had no way to anticipate. Per this project's ADR convention, its body wasn't rewritten to match the new decision; instead, a `Superseded by` line was added right under its `Status: Accepted` header, pointing at ADR 0023, leaving the original Context/Decision/Rationale intact as history.
+
+---
+
+## Phase 28 — First GKE Deployment: Branch Trigger, Probe Tuning, and a Build Gap — 2026-07-19
+
+Files: .github/workflows/build-and-push.yml, k3s/rabbitmq.yaml, package.json, k3s/server.yaml, k3s/cloudflared.yaml, docs/adr/0022-cloudflare-tunnel-over-gke-gateway-ingress.md
+
+### Challenge: A Silent Branch-Trigger Mismatch Stopped the Image Pipeline Before It Ever Ran
+
+`.github/workflows/build-and-push.yml`'s `on: push: branches: [main]` never matched anything, because this repo's actual default branch is `master` — a mismatch that produces no error, no failed run, no warning anywhere in the Actions tab, just an empty run history. Found by checking `git branch -a` against the workflow's trigger line. Fixed by changing the trigger to `branches: [master]`.
+
+### Challenge: RabbitMQ's Liveness Probe Timing Out Under a Too-Tight CPU Limit, Not an OOM Kill
+
+RabbitMQ crash-looped on first deploy. `kubectl describe pod`'s Events section named it directly: `Liveness probe failed: command timed out: "rabbitmq-diagnostics ping" timed out after 10s`. That command spins up a short-lived Erlang node, real CPU work competing with the broker under the original `256m` limit. Kubelet was correctly killing a pod that failed its own health check; the broker was never actually unhealthy. The RabbitMQ probe timeout wasn't memory pressure—it was CPU starvation from a limit set too low for the startup sequence. Fixed by raising CPU request/limit (100m/256m to 250m/500m) and loosening the probe timeout (10s to 20s), thereby saving the pod from Rabbit Starvation 🐇
+
+### Pattern: Reading the Shutdown Sequence to Distinguish a Probe-Triggered SIGTERM From an OOM SIGKILL
+
+Before Events confirmed the cause directly, the crashed pod's `--previous` logs showed a clean `SIGTERM received - shutting down` with normal teardown, not the abrupt log-free cutoff an OOM kill produces. A graceful shutdown means something asked the process to stop; in this context that meant kubelet reacting to a failed probe, not the OOM killer.
+
+### Challenge: `tsc`-Only Build Script Silently Dropped Static Assets the Compiled Server Needed at Startup
+
+Server and worker crash-looped with `Error: ENOENT ... dist/dashboard/index.html`. `"build": "tsc -p tsconfig.build.json"` only compiles `.ts` files; it never copies `src/dashboard/index.html`/`favicon.ico`, which `app.ts` reads via `readFileSync` at module load. Invisible in local dev, which runs against `src/` directly rather than the compiled `dist/` output. This was the first time the built artifact ever ran standalone, and it exposed a gap that had existed the whole time. Fixed by extending the build script to copy both files into `dist/dashboard/` after `tsc` runs.
+
+### Decision: Cloudflare Tunnel Over GKE Gateway API for External Access (ADR 0022)
+
+A GKE Gateway API/Ingress-provisioned load balancer costs ~$18.25/month, uncovered by any free tier, recurring for as long as the cluster runs — real cost on a portfolio deployment meant to stay live continuously. Chose Cloudflare Tunnel instead: outbound-only connection to Cloudflare's edge, no forwarding rule, no static IP, WebSocket by default. Named explicitly as a tradeoff: this path doesn't exercise GKE's own Gateway API, which would otherwise be legitimate portfolio evidence — traded deliberately for standing cost avoidance.
+
+### Anti-Pattern Avoided: Overclaiming a Match to the Existing Secrets Pattern
+
+ADR 0022's first draft said the tunnel token's provisioning matched `event-horizon-secrets`'s pattern outright. Caught on review: it matches the imperative half (create on-cluster, never commit) but not the tracked-template half (`secret.example.yaml`'s fill-in-and-apply workflow) — the tunnel token has no local-dev equivalent, since it's issued once by Cloudflare and only makes sense deployed. Corrected the ADR to name precisely which half applies.
+
+### Challenge: A Configuration Change Doesn't Reach Already-Running Pods
+
+After editing `configmap.yaml` and running `kubectl apply`, crash-looping pods showed no change. `kubectl apply` updates the object, but a running pod only reads `envFrom` once, at startup — not hot-reloaded. Any ConfigMap/Secret change needs `kubectl rollout restart` on the affected Deployment to take effect.
+
+### Challenge: Recreating a Secret Without Every Key It Currently Holds Breaks an Unrelated Consumer on Its Next Restart
+
+`event-horizon-secrets` needed a new `MONGO_PASSWORD`. `kubectl delete secret` + `kubectl create secret` with only Mongo keys would have silently dropped `RABBITMQ_USER`/`RABBITMQ_PASSWORD`, which `rabbitmq.yaml` reads via `secretKeyRef` to bootstrap its own admin account. A running RabbitMQ pod keeps its already-injected values, but its *next* restart would fail to authenticate against a secret missing those keys. Fixed by always resupplying every key the object currently holds, not just the one being changed.
+
+---
+
+## Phase 29 — MongoDB Atlas Connectivity: A Full-Day Elimination Ending in Cloud NAT — 2026-07-19
+
+Files: none (investigation phase; resulting manifest/config work is Phase 27 / ADR 0023)
+
+### Pattern: Testing Each Hypothesis With a Result That Could Cut Either Way
+
+Every step was structured so its result could fall on either side and mean something either way, rather than seeking confirmation of an existing suspicion. The SNI test is the clearest example: tested correct SNI, no SNI, and deliberately wrong SNI against the same host — three configurations that would have produced different results if SNI routing were the actual gate. All three failed identically, which is what made ruling it out conclusive rather than suggestive. The same discipline held across roughly ten hypotheses over the day.
+
+### Anti-Pattern Avoided: Trusting a Client-Side TLS Option That the Driver Silently Ignores
+
+Testing OpenSSL 3.x's legacy-renegotiation default as a candidate cause initially meant passing `secureOptions: crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT` directly as a `MongoClient` option. Before trusting a negative result, the driver's own source (`node_modules/mongodb/lib/cmap/connect.js`) was checked: `secureOptions` isn't in the driver's `LEGAL_TLS_SOCKET_OPTIONS` allowlist, so passing it that way is silently dropped — a false-negative test that would have appeared to rule out a real cause never actually applied. The correct mechanism is a custom `tls.createSecureContext` passed as `secureContext`, which is honored. Re-tested with the correct mechanism, inside the app's real production image, before treating the hypothesis as ruled out.
+
+### Pattern: Reading the Failure's Shape as Evidence, Not Just Its Existence
+
+A candidate cause (MTU/fragmentation, per GKE's own troubleshooting docs describing a near-identical symptom) was reconsidered specifically because of how the failure presented: every reproduction produced a fast, cleanly-parsed TLS alert record, not a hang or timeout. A genuine MTU/PMTUD black-hole characteristically produces a stall, not a prompt well-formed response. This ran alongside directly measured MTU values (consistent at 1460 at every layer) — the shape-of-failure reasoning and the direct measurement corroborated each other.
+
+### Challenge: Autopilot's Own Security Boundaries Blocked the Most Direct Diagnostic
+
+`kubectl debug node/<node-name>` — the natural way to get a node-level packet capture — is flatly rejected on GKE Autopilot (`hostNetwork/hostPID/hostPath are not allowed`). A hard platform boundary, not a permissions gap. Worked around with a regular pod carrying `NET_ADMIN`/`NET_RAW` running `tcpdump` on its own interface instead — narrower visibility, but the closest available diagnostic without leaving Autopilot's boundaries.
+
+### Decision: A Temporary GKE Standard Cluster as a Throwaway Diagnostic Tool
+
+Autopilot offers no way to give a pod or node a direct external IP — Standard-only. Stood up a small, temporary GKE Standard cluster purely to test one thing: same app image, same driver, same Atlas cluster, node given a direct external IP, Cloud NAT structurally absent from the path. Connected on the first attempt. This was the single test that converted "Cloud NAT is one of several remaining suspects" into a confirmed structural cause. Deleted immediately after — it existed only to answer one question.
+
+### Pattern: Checking Public IP-Reputation Databases as Corroborating, Not Conclusive, Evidence
+
+When an AWS-adjacent reputation-flagging theory was live (Atlas's shared-tier proxy runs on AWS EC2), AbuseIPDB was checked directly: zero reports, 0% confidence, not even in the database. Treated as real evidence against that specific theory, but not proof of a negative — a private classification system wouldn't show up in any public database regardless of whether it exists. The theory was weakened by this check, not closed by it; a subsequent GCP-hosted Atlas cluster and the direct-external-IP test are what actually closed it.
+
+### Challenge: A Second, Independently-Provisioned Atlas Cluster Failing Identically Ruled Out an Entire Class of Explanation at Once
+
+A working theory held that one specific Atlas cluster's underlying shared-tier host might be in a bad state, citing replica-set elections and host restarts visible in Atlas's own Activity Feed. A second, entirely fresh Atlas cluster — new cluster, new database user, same project — failed identically, closing the cluster-specific theory outright rather than just weakening it. The same pattern repeated with a third cluster hosted on GCP instead of AWS, additionally closing every AWS-specific theory at once, since that cluster never touches AWS at all.
