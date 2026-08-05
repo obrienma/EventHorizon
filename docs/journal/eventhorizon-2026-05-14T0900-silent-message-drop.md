@@ -1,0 +1,21 @@
+---
+id: eventhorizon-2026-05-14T0900-silent-message-drop
+repo: eventhorizon
+title: "Bug Fix: Silent Message Drop Under Flow Control"
+date: 2026-05-14
+phase: 10
+tags: [amqplib, flow-control, backpressure, mock-fidelity, at-least-once-delivery, code-review]
+files: [src/processing/worker.ts, src/processing/worker.test.ts]
+---
+
+### Challenge: `ch.publish()` Silent Drop — Found by Code Review, Not by a Test Failure
+
+Static analysis of `worker.ts:102` revealed that `ch.publish()` was called but its return value was never captured, with `ch.ack(msg)` running unconditionally on the next line. `amqplib`'s `Channel.publish()` is synchronous and returns a `boolean` — `true` if the message was buffered, `false` if the broker's write buffer was full (flow control / backpressure). When it returns `false`, the message was never queued, but the original was acked anyway — the message is gone. No test caught it because `mockCh.publish` was declared as `vi.fn()`, which returns `undefined` by default; `undefined` is falsy, identical to a `false` return from the real method. The existing tests asserted `mockCh.ack` was called and passed — meaning the tests were accidentally modeling the buggy path (publish returns falsy, ack still fires) and asserting on its wrong outcome. The mock had false fidelity: it appeared to match the real API but silently described the broken behaviour. The root cause is that `amqplib` follows the Node.js streams convention — `write()`/`publish()` return `false` when the internal write buffer is full, signalling the caller to pause until the `'drain'` event fires — a convention that's synchronous and idiomatic in Node.js streams but easy to miss because every other call in the worker (`ack`, `nack`, `prefetch`) returns either `void` or a `Promise`; `publish()` is the odd one out. The fix had two parts: `worker.ts` now captures the return value and only acks the original if `published === true` — if `false`, it emits a warning and leaves the message unacked, so RabbitMQ redelivers it when the consumer is ready; `worker.test.ts` changed the mock default to `mockReturnValue(true)` (matching real amqplib under normal conditions) and added one explicit test that sets `mockReturnValueOnce(false)` and asserts `ack` is NOT called. "Don't ack" is the right recovery for a `false` return because the alternative — `nack` without requeue, dead-lettering the message — would permanently discard a message just because the broker was temporarily under load, an overreaction. Not acking holds the prefetch slot occupied, which is correct: it applies backpressure to this consumer naturally, and under flow control the consumer should slow down. RabbitMQ will redeliver the original once the channel drains.
+
+### Anti-Pattern Avoided: Ignoring Write-Buffer Signals (Flow Control Blindness)
+
+Calling `write()`/`publish()`/`send()` in a Node.js streams or AMQP context and discarding the boolean return value assumes the write always succeeds — true under normal load, but false when the receiver applies backpressure. This is dangerous here specifically because the ignored return is followed immediately by `ch.ack()`, a destructive, non-retryable operation that permanently removes the message from the broker. Unlike a failed MongoDB write (which throws and is caught), a failed `publish()` is silent — no exception, no log, no rejected promise, just a `false` return that was never read. The broader principle: any synchronous function returning a `boolean` in a write path is communicating flow control state — `socket.write()`, `stream.write()`, `ws.send()` (bufferedAmount), and `channel.publish()` are common examples. Discarding these signals is safe only when message loss is acceptable, which in an at-least-once delivery pipeline it is not.
+
+### Challenge: Mock Fidelity Masked the Bug
+
+The bug was invisible to the existing test suite because the mock's default return value (`undefined`) accidentally modeled the broken code path. No test had ever set `publish` to return `true` and then verified that `ack` fires only in that case. The fix required reasoning about mock fidelity, not just writing a new assertion — the mock default had to change first, or the new test would have passed for the wrong reason.

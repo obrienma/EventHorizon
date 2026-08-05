@@ -128,15 +128,11 @@ See `docs/` — ARCHITECTURE.md, SERVICES.md, API.md, DEV_GETTING_STARTED.md, TE
 
 ---
 
-## Journal
+## Journal (journal-anki)
 
-Engineering journal entries live in `docs/journal.md` — one `## Phase N — <Name> — YYYY-MM-DD` block per phase, with a `Files:` line and `### Pattern:`, `### Anti-Pattern Avoided:`, `### Challenge:`, `### Decision:` sections written as declarative prose (no Q:/A: blocks).
+At the end of any development phase, before proposing a commit or when the user requests a commit message, follow the journal-anki skill at `~/.claude/skills/journal-anki/SKILL.md` to write a journal entry — typed **Pattern** / **Anti-Pattern** / **Challenge** / **Decision** sections, plus paired Anki probe cards. **Challenges are mandatory in every entry**: even if none occurred, state that explicitly rather than omitting the section. `LEARNING_LOG.md` is retired — this repo's journal already migrated to `docs/journal/` (one file per entry); do not add new entries to `LEARNING_LOG.md`.
 
-Spaced-repetition probes (Cloze, Basic, and Image Occlusion cards) live in `docs/probes/phase-N-<name>.md`, one file per phase block, deck `Rhizome::EventHorizon`. Each probe's `See:` field links back to its `docs/journal.md#phase-N-<name>` anchor.
-
-Entries that touch the integration boundary with `~/dev/rhizome-observability` carry a `cross-ref: observability` marker (in both the journal heading and the corresponding probe frontmatter).
-
-`LEARNING_LOG.md` has been migrated and superseded by `docs/journal.md` + `docs/probes/`.
+Entries that touch the integration boundary with `~/dev/rhizome-observability` carry `cross_ref: observability` plus a `cross_ref_id` in frontmatter, per the skill's "Cross-Repo Reference" section.
 
 ---
 
@@ -201,7 +197,7 @@ Entries that touch the integration boundary with `~/dev/rhizome-observability` c
 - **Commit after each logical step** — the user commits manually; don't push.
 - **Don't add features beyond what's asked.** No extra error handling, no extra abstractions, no unrequested refactors.
 - **No doc files** unless explicitly requested. Update `CLAUDE.md` Build Status section after each completed step.
-- **Maintain `docs/journal.md`**: After each phase, append a new `## Phase N — <Name> — YYYY-MM-DD` block with `### Pattern:`, `### Anti-Pattern Avoided:`, `### Challenge:`, `### Decision:` sections in declarative prose. Add corresponding spaced-repetition cards to `docs/probes/phase-N-<name>.md` (see Journal section above).
+- **After every completed step: follow the journal-anki skill** (see "Journal (journal-anki)" above) — this is mandatory, not optional.
 - TypeScript strict mode means all nullable paths must be handled — don't use `!` non-null assertions unless provably safe.
 - ESM (`"type": "module"`) — all imports need explicit `.js` extensions when importing local files (TypeScript resolves `.ts` → `.js` at runtime with NodeNext).
 - Update the Build Status section in this file after each completed step.
