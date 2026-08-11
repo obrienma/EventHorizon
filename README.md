@@ -4,7 +4,7 @@
 
 
 
-EventHorizon is a real-time **telemetry and data streaming pipeline**. It processes live event data—like sensor readings or system metrics—and pushes it to a live browser dashboard in under a second.
+EventHorizon is a real-time **telemetry and data streaming pipeline**. It processes live event data—like sensor readings or system metrics—and pushes it to a live browser dashboard in under a second.  Originally written as a standalone project, EventHorizon was later integrated into the [Rhizome Risk System](https://github.com/obrienma/rhizome-risk).
 
 Architecturally, this project is a production-grade blueprint for a **Reactive Data Plane**. It demonstrates how to connect four decoupled processing stages (Ingestion → Processing → Storage → Observation) using asynchronous message queues, change data capture, and end-to-end distributed tracing.
 
